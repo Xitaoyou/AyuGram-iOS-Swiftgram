@@ -150,8 +150,10 @@ def build(source, ci, output, env):
     original_rules = rules_path.read_bytes()
     if hashlib.sha256(original_rules).hexdigest() != 'b6776b1c10a2c965f01259dd95ebe1b045afc5e22b3446b8ae81d44f11c3a7da':
         raise ValueError('Unexpected rules_apple iOS rules revision')
-    # Builds from this repository start above every earlier build so update checks compare correctly.
-    number = 200000 + int(env.get('GITHUB_RUN_NUMBER', '1')) * 100 + int(env.get('GITHUB_RUN_ATTEMPT', '1'))
+    # Builds from this fork start above the latest upstream release (build-211601)
+    # so re-signing over an installed 211501/211601 never lowers CFBundleVersion
+    # and the in-app update check does not treat the new build as older.
+    number = 211601 + int(env.get('GITHUB_RUN_NUMBER', '1')) * 100 + int(env.get('GITHUB_RUN_ATTEMPT', '1'))
     manifest = {'upstream': UPSTREAM, 'source_commit': head,
                 'configuration': configuration, 'signing': 'ad-hoc with app group entitlements; requires re-signing to install',
                 'variant': variant, 'xcode': xcode, 'versions': versions, 'build_number': number,
