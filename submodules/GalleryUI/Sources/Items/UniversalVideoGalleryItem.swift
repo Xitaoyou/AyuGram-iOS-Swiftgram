@@ -270,7 +270,7 @@ private final class UniversalVideoGalleryItemOverlayNode: GalleryOverlayContentN
                     }
                     schedule.append((startTime, message))
                     
-                    if let adAttribute = message.adAttribute {
+                    if let adAttribute = message.aygVisibleAdAttribute {
                         maxDisplayDuration = adAttribute.maxDisplayDuration ?? 30
                         startTime += maxDisplayDuration
                     }
@@ -350,7 +350,7 @@ private final class UniversalVideoGalleryItemOverlayNode: GalleryOverlayContentN
         }
         
         if let context = self.context, let (initialTimestamp, maybeMessage) = currentAd, let adMessage = maybeMessage, !self.hiddenMessages.contains(adMessage.id) {
-            if let adAttribute = adMessage.adAttribute {
+            if let adAttribute = adMessage.aygVisibleAdAttribute {
                 if !self.reportedMessages.contains(adAttribute.opaqueId) {
                     self.reportedMessages.insert(adAttribute.opaqueId)
                     context.engine.messages.markAdAsSeen(opaqueId: adAttribute.opaqueId)
@@ -390,7 +390,7 @@ private final class UniversalVideoGalleryItemOverlayNode: GalleryOverlayContentN
                             }
                         },
                         adAction: { [weak self] in
-                            if let self, let ad = adMessage.adAttribute {
+                            if let self, let ad = adMessage.aygVisibleAdAttribute {
                                 self.hiddenMessages.insert(adMessage.id)
                                 if let validLayout = self.validLayout {
                                     self.updateLayout(size: validLayout.size, metrics: validLayout.metrics, insets: validLayout.insets, isHidden: validLayout.isHidden, transition: .immediate)
@@ -1173,7 +1173,7 @@ final class UniversalVideoGalleryItemNode: ZoomableContentGalleryItemNode {
                 return
             }
             var adMessage: Message?
-            if case let .message(message, _) = self.item?.contentInfo, let _ = message.adAttribute {
+            if case let .message(message, _) = self.item?.contentInfo, let _ = message.aygVisibleAdAttribute {
                 adMessage = message
             }
             self.openMoreMenu(sourceView: self.moreBarButton.referenceNode.view, gesture: gesture, adMessage: adMessage, isSettings: false)
@@ -1215,7 +1215,7 @@ final class UniversalVideoGalleryItemNode: ZoomableContentGalleryItemNode {
     
     
     override func contentTapAction() -> Bool {
-        if case let .message(message, _) = self.item?.contentInfo, let _ = message.adAttribute {
+        if case let .message(message, _) = self.item?.contentInfo, let _ = message.aygVisibleAdAttribute {
             self.item?.performAction(.ad(message.id))
             return true
         }
@@ -1223,7 +1223,7 @@ final class UniversalVideoGalleryItemNode: ZoomableContentGalleryItemNode {
     }
     
     override func contentDoubleTapAction(location: CGPoint) -> Bool {
-        if case let .message(message, _) = self.item?.contentInfo, let _ = message.adAttribute {
+        if case let .message(message, _) = self.item?.contentInfo, let _ = message.aygVisibleAdAttribute {
             self.item?.performAction(.ad(message.id))
             return true
         }
@@ -1664,7 +1664,7 @@ final class UniversalVideoGalleryItemNode: ZoomableContentGalleryItemNode {
                         }
                     }
                     let status = messageMediaFileStatus(context: item.context, messageId: message.id, file: file)
-                    if !isWebpage && message.adAttribute == nil && !NativeVideoContent.isHLSVideo(file: file) {
+                    if !isWebpage && message.aygVisibleAdAttribute == nil && !NativeVideoContent.isHLSVideo(file: file) {
                         scrubberView.setFetchStatusSignal(status |> map(EngineMediaResource.FetchStatus.init), strings: self.presentationData.strings, decimalSeparator: self.presentationData.dateTimeFormat.decimalSeparator, fileSize: file.size)
                     }
                     
@@ -1980,7 +1980,7 @@ final class UniversalVideoGalleryItemNode: ZoomableContentGalleryItemNode {
                     hasMoreButton = false
                 }
                 
-                if let _ = message.adAttribute {
+                if let _ = message.aygVisibleAdAttribute {
                     hasMoreButton = true
                 }
                 
@@ -2062,7 +2062,7 @@ final class UniversalVideoGalleryItemNode: ZoomableContentGalleryItemNode {
         if let contentInfo = item.contentInfo {
             switch contentInfo {
                 case let .message(message, mediaSubject):
-                    isAd = message.adAttribute != nil
+                    isAd = message.aygVisibleAdAttribute != nil
                     self.footerContentNode.setMessage(message, mediaSubject: mediaSubject, displayInfo: !item.displayInfoOnTop, peerIsCopyProtected: item.peerIsCopyProtected, displayPictureInPictureButton: self.hasPictureInPicture, settingsButtonState: self.settingsButtonState, displayStickersButton: self.displayStickersButton)
                 case let .webPage(webPage, media, _):
                     self.footerContentNode.setWebPage(webPage, media: media)
@@ -2096,12 +2096,12 @@ final class UniversalVideoGalleryItemNode: ZoomableContentGalleryItemNode {
         var title: String?
         if let indexData = item.indexData {
             title = self.presentationData.strings.Items_NOfM("\(indexData.position + 1)", "\(indexData.totalCount)").string
-        } else if case let .message(message, _) = item.contentInfo, let _ = message.adAttribute {
+        } else if case let .message(message, _) = item.contentInfo, let _ = message.aygVisibleAdAttribute {
             title = self.presentationData.strings.Gallery_Ad
         }
         
         if case let .message(message, _) = item.contentInfo {
-            self._titleContent.set(.single(GalleryTitleView.Content(message: EngineMessage(message), title: title, action: message.adAttribute == nil ? { [weak self] in
+            self._titleContent.set(.single(GalleryTitleView.Content(message: EngineMessage(message), title: title, action: message.aygVisibleAdAttribute == nil ? { [weak self] in
                 guard let self else {
                     return
                 }
@@ -3130,7 +3130,7 @@ final class UniversalVideoGalleryItemNode: ZoomableContentGalleryItemNode {
         if let contentInfo = item.contentInfo {
             switch contentInfo {
             case let .message(message, mediaSubject):
-                isAd = message.adAttribute != nil
+                isAd = message.aygVisibleAdAttribute != nil
                 self.footerContentNode.setMessage(message, mediaSubject: mediaSubject, displayInfo: !item.displayInfoOnTop, peerIsCopyProtected: item.peerIsCopyProtected, displayPictureInPictureButton: self.hasPictureInPicture, settingsButtonState: self.settingsButtonState, displayStickersButton: self.displayStickersButton)
             case let .webPage(webPage, media, _):
                 self.footerContentNode.setWebPage(webPage, media: media)
@@ -3431,7 +3431,7 @@ final class UniversalVideoGalleryItemNode: ZoomableContentGalleryItemNode {
     }
     
     private func adMenuMainItems(message: Message) -> Signal<[ContextMenuItem], NoError> {
-        guard let adAttribute = message.adAttribute else {
+        guard let adAttribute = message.aygVisibleAdAttribute else {
             return .single([])
         }
         

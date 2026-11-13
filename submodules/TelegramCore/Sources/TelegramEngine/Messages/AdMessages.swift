@@ -443,6 +443,7 @@ private class AdMessagesHistoryContextImpl {
 
     private var isActivated: Bool = false
     private let disposable = MetaDisposable()
+    private var settingsObserver: NSObjectProtocol?
     
     init(queue: Queue, account: Account, peerId: EnginePeer.Id, messageId: EngineMessage.Id?, activateManually: Bool) {
         self.queue = queue
@@ -472,9 +473,32 @@ private class AdMessagesHistoryContextImpl {
         if !activateManually {
             self.activate()
         }
+
+        // AYG: apply "Disable Ads" immediately. Without this observer the toggle
+        // only took effect after reopening the chat (or restarting the app),
+        // because the already-created context kept its cached sponsored posts.
+        self.settingsObserver = NotificationCenter.default.addObserver(forName: AyuGramSettings.didChange, object: nil, queue: .main) { [weak self] _ in
+            guard let self else {
+                return
+            }
+            if AyuGramSettings.shared.extra.disableAds {
+                self.disposable.dispose()
+                self.stateValue = State(interPostInterval: nil, messages: [])
+                let account = self.account
+                let peerId = self.peerId
+                let _ = account.postbox.transaction { transaction in
+                    CachedState.setCached(transaction: transaction, peerId: peerId, state: nil)
+                }.startStandalone()
+            } else if !self.isActivated {
+                self.activate()
+            }
+        }
     }
     
     deinit {
+        if let settingsObserver = self.settingsObserver {
+            NotificationCenter.default.removeObserver(settingsObserver)
+        }
         self.disposable.dispose()
         self.maskAsSeenDisposables.dispose()
     }
@@ -498,6 +522,9 @@ private class AdMessagesHistoryContextImpl {
             let _ = account.postbox.transaction { transaction in
                 CachedState.setCached(transaction: transaction, peerId: peerId, state: nil)
             }.startStandalone()
+            // Stay unactivated so the settings observer can start the request
+            // again if "Disable Ads" is switched back off.
+            self.isActivated = false
             return
         }
 

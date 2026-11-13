@@ -5350,7 +5350,7 @@ extension ChatControllerImpl {
             var minOffsetForNavigation: CGFloat = strongSelf.chatDisplayNode.historyNode.isHoldingScrollTarget ? 0.5 : 40.0
             strongSelf.chatDisplayNode.historyNode.enumerateItemNodes { itemNode in
                 if let itemNode = itemNode as? ChatMessageBubbleItemNode {
-                    if let message = itemNode.item?.content.firstMessage, let adAttribute = message.adAttribute {
+                    if let message = itemNode.item?.content.firstMessage, let adAttribute = message.aygVisibleAdAttribute {
                         minOffsetForNavigation += itemNode.bounds.height
 
                         switch offset {

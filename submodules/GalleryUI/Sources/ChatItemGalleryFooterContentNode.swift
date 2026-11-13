@@ -218,7 +218,7 @@ final class ChatItemGalleryFooterContentNode: GalleryFooterContentNode, ASScroll
     var openActionOptions: ((GalleryControllerInteractionTapAction, EngineRawMessage) -> Void)?
     
     private var isAd: Bool {
-        if self.currentMessage?.adAttribute != nil {
+        if self.currentMessage?.aygVisibleAdAttribute != nil {
             return true
         }
         return false
@@ -902,7 +902,7 @@ final class ChatItemGalleryFooterContentNode: GalleryFooterContentNode, ASScroll
         }
         var canFullscreen = false
         var canDelete: Bool
-        var canShare = !message.containsSecretMedia && !Namespaces.Message.allNonRegular.contains(message.id.namespace) && message.adAttribute == nil
+        var canShare = !message.containsSecretMedia && !Namespaces.Message.allNonRegular.contains(message.id.namespace) && message.aygVisibleAdAttribute == nil
                 
         var canEdit = false
         var isImage = false
@@ -991,7 +991,7 @@ final class ChatItemGalleryFooterContentNode: GalleryFooterContentNode, ASScroll
             canDelete = false
         }
         
-        if let _ = message.adAttribute {
+        if let _ = message.aygVisibleAdAttribute {
             displayInfo = false
             canFullscreen = false
         }
@@ -1073,7 +1073,7 @@ final class ChatItemGalleryFooterContentNode: GalleryFooterContentNode, ASScroll
             }
             
             messageText = galleryCaptionStringWithAppliedEntities(context: self.context, text: text, entities: entities, message: message, cachedMessageSyntaxHighlight: cachedMessageSyntaxHighlight).mutableCopy() as! NSMutableAttributedString
-            if let _ = message.adAttribute {
+            if let _ = message.aygVisibleAdAttribute {
                 messageText.insert(NSAttributedString(string: (authorNameText ?? "") + "\n", font: Font.semibold(17.0), textColor: .white), at: 0)
             }
         }
@@ -1108,7 +1108,7 @@ final class ChatItemGalleryFooterContentNode: GalleryFooterContentNode, ASScroll
             displayActionButton = canShare
             displayEditButton = canEdit
             
-            if let adAttribute = message.adAttribute {
+            if let adAttribute = message.aygVisibleAdAttribute {
                 if self.buttonNode == nil {
                     let buttonNode = SolidRoundedButtonNode(title: adAttribute.buttonText, theme: SolidRoundedButtonTheme(backgroundColor: UIColor(rgb: 0xffffff, alpha: 0.15), foregroundColor: UIColor(rgb: 0xffffff)), height: 50.0, cornerRadius: 11.0)
                     buttonNode.pressed = { [weak self] in

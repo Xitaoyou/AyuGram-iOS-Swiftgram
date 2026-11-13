@@ -1,5 +1,6 @@
 import Foundation
 import Postbox
+import SGSimpleSettings
 internal import TelegramApi
 
 public extension MessageFlags {
@@ -621,6 +622,17 @@ public extension Message {
             }
         }
         return nil
+    }
+
+    // AYG: "Disable Ads" must also hide sponsored posts that were cached before
+    // the switch was enabled. Every Gallery, footer and reporting consumer reads
+    // this instead of `adAttribute`, so old ads cannot render a CTA or report a
+    // view even though the network requests are already blocked.
+    var aygVisibleAdAttribute: AdMessageAttribute? {
+        if AyuGramSettings.shared.extra.disableAds {
+            return nil
+        }
+        return self.adAttribute
     }
     
     var factCheckAttribute: FactCheckMessageAttribute? {

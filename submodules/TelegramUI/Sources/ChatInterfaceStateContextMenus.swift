@@ -542,7 +542,7 @@ func contextMenuForChatPresentationInterfaceState(chatPresentationInterfaceState
         hasExpandedAudioTranscription = messageNode.hasExpandedAudioTranscription()
     }
 
-    if messages.count == 1, let adAttribute = messages[0].adAttribute {
+    if messages.count == 1, let adAttribute = messages[0].aygVisibleAdAttribute {
         let message = messages[0]
 
         let presentationData = context.sharedContext.currentPresentationData.with { $0 }
@@ -2689,7 +2689,7 @@ func contextMenuForChatPresentationInterfaceState(chatPresentationInterfaceState
         if case .messageOptions = chatPresentationInterfaceState.subject {
             isMessageOptions = true
         }
-        let showsBubblelessInfoRows = !chatPresentationInterfaceState.bubbleCorners.bubbleMode && chatMessageBubblelessMenuShowsInfoRows(bubbleMode: false, isMessageOptions: isMessageOptions, incoming: message.effectivelyIncoming(context.account.peerId), isAd: message.adAttribute != nil, isService: chatMessageMediaKind(message) == .service)
+        let showsBubblelessInfoRows = !chatPresentationInterfaceState.bubbleCorners.bubbleMode && chatMessageBubblelessMenuShowsInfoRows(bubbleMode: false, isMessageOptions: isMessageOptions, incoming: message.effectivelyIncoming(context.account.peerId), isAd: message.aygVisibleAdAttribute != nil, isService: chatMessageMediaKind(message) == .service)
         
         if isEdited {
             if !actions.isEmpty {

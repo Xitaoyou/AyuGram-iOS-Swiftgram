@@ -468,13 +468,13 @@ final class ChatImageGalleryItemNode: ZoomableContentGalleryItemNode {
         self.updateFooter(animated: false)
         
         var title: String?
-        if let _ = message.adAttribute {
+        if let _ = message.aygVisibleAdAttribute {
             title = self.presentationData.strings.Gallery_Ad
         } else if let location {
             title = self.presentationData.strings.Items_NOfM("\(location.index + 1)", "\(location.count)").string
         }
         
-        self._titleContent.set(.single(GalleryTitleView.Content(message: EngineMessage(message), title: title, action: message.adAttribute == nil ? { [weak self] in
+        self._titleContent.set(.single(GalleryTitleView.Content(message: EngineMessage(message), title: title, action: message.aygVisibleAdAttribute == nil ? { [weak self] in
             guard let self else {
                 return
             }
@@ -581,7 +581,7 @@ final class ChatImageGalleryItemNode: ZoomableContentGalleryItemNode {
     }
     
     private func adMenuMainItems() -> Signal<[ContextMenuItem], NoError> {
-        guard let message = self.message, let adAttribute = message.adAttribute else {
+        guard let message = self.message, let adAttribute = message.aygVisibleAdAttribute else {
             return .single([])
         }
         
@@ -833,7 +833,7 @@ final class ChatImageGalleryItemNode: ZoomableContentGalleryItemNode {
     
     private func openMoreMenu(sourceNode: ASDisplayNode, gesture: ContextGesture?) {
         let items: Signal<[ContextMenuItem], NoError>
-        if let message = self.message, let _ = message.adAttribute {
+        if let message = self.message, let _ = message.aygVisibleAdAttribute {
             items = self.adMenuMainItems()
         } else {
             items = self.contextMenuMainItems()

@@ -725,7 +725,7 @@ func chatHistoryEntriesForView(
                     customTags: message.customTags,
                     forwardInfo: message.forwardInfo,
                     author: message.author,
-                    text: /*"\(message.adAttribute!.opaqueId.hashValue)" + */message.text,
+                    text: /*"\(message.aygVisibleAdAttribute!.opaqueId.hashValue)" + */message.text,
                     attributes: message.attributes,
                     media: message.media,
                     peers: message.peers,

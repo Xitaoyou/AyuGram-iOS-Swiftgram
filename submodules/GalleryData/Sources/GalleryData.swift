@@ -314,7 +314,7 @@ public func chatMessageGalleryControllerData(
                 }
             }
             
-            if let adAttribute = message.adAttribute, adAttribute.hasContentMedia {
+            if let adAttribute = message.aygVisibleAdAttribute, adAttribute.hasContentMedia {
                 let gallery = GalleryController(context: context, source: .standaloneMessage(message, mediaSubject), invertItemOrder: reverseMessageGalleryOrder, streamSingleVideo: stream, fromPlayingVideo: autoplayingVideo, landscape: landscape, timecode: nil, playbackRate: 1.0, synchronousLoad: synchronousLoad, replaceRootController: { [weak navigationController] controller, ready in
                     navigationController?.replaceTopController(controller, animated: false, ready: ready)
                 }, baseNavigationController: navigationController, actionInteraction: actionInteraction)

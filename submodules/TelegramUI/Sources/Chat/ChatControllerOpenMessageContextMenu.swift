@@ -81,7 +81,7 @@ extension ChatControllerImpl {
                 var tip: ContextController.Tip?
                 
                 if tip == nil {
-                    let isAd = message.adAttribute != nil
+                    let isAd = message.aygVisibleAdAttribute != nil
                         
                     var isAction = false
                     for media in message.media {

@@ -1711,7 +1711,7 @@ class ChatControllerNode: ASDisplayNode, ASScrollViewDelegate {
                         guard let self, let adMessage = self.chatPresentationInterfaceState.adMessage else {
                             return
                         }
-                        if self.context.isPremium, let adAttribute = adMessage.adAttribute {
+                        if self.context.isPremium, let adAttribute = adMessage.aygVisibleAdAttribute {
                             self.controllerInteraction.removeAd(adAttribute.opaqueId)
                         } else {
                             self.controllerInteraction.openNoAdsDemo()
@@ -5763,7 +5763,7 @@ class ChatControllerNode: ASDisplayNode, ASScrollViewDelegate {
         var hasAd = false
         self.historyNode.forEachVisibleItemNode { itemNode in
             if let itemNode = itemNode as? ChatMessageItemView {
-                if let _ = itemNode.item?.message.adAttribute {
+                if let _ = itemNode.item?.message.aygVisibleAdAttribute {
                     hasAd = true
                 }
             }
@@ -5787,7 +5787,7 @@ class ChatControllerNode: ASDisplayNode, ASScrollViewDelegate {
         var hasAd = false
         self.historyNode.forEachVisibleItemNode { itemNode in
             if let itemNode = itemNode as? ChatMessageItemView {
-                if let _ = itemNode.item?.message.adAttribute {
+                if let _ = itemNode.item?.message.aygVisibleAdAttribute {
                     hasAd = true
                 }
             }

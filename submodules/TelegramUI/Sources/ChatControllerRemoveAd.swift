@@ -12,7 +12,7 @@ public extension ChatControllerImpl {
     func removeAd(opaqueId: Data) {
         var foundItemNode: ChatMessageItemView?
         self.chatDisplayNode.historyNode.forEachItemNode { itemNode in
-            if let itemNode = itemNode as? ChatMessageItemView, let item = itemNode.item, let adAttribute = item.message.adAttribute, adAttribute.opaqueId == opaqueId {
+            if let itemNode = itemNode as? ChatMessageItemView, let item = itemNode.item, let adAttribute = item.message.aygVisibleAdAttribute, adAttribute.opaqueId == opaqueId {
                 foundItemNode = itemNode
             }
         }

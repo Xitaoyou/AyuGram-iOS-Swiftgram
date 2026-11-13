@@ -1,6 +1,7 @@
 import Foundation
 import Postbox
 import SwiftSignalKit
+import SGSimpleSettings
 internal import TelegramApi
 import MtProtoKit
 
@@ -53,6 +54,16 @@ private func appsEntryId() -> ItemCacheEntryId {
 }
 
 func _internal_requestRecommendedChannels(account: Account, peerId: EnginePeer.Id?, forceUpdate: Bool) -> Signal<Never, NoError> {
+    // AYG: "Disable Ads" must stop channel recommendations at the engine layer,
+    // not only skip the UI entry. Drop the caches too, so recommendations saved
+    // by an older build cannot be rendered from local data.
+    if AyuGramSettings.shared.extra.disableAds {
+        return account.postbox.transaction { transaction -> Void in
+            transaction.removeItemCacheEntry(id: entryId(peerId: peerId))
+            transaction.removeItemCacheEntry(id: appsEntryId())
+        }
+        |> ignoreValues
+    }
     return account.postbox.transaction { transaction -> (Peer?, Bool) in
         if let peerId {
             guard let channel = transaction.getPeer(peerId) as? TelegramChannel, case .broadcast = channel.info else {

@@ -138,7 +138,7 @@ public class ChatMessageShareButton: ASDisplayNode {
         }
         
         var hasMore = false
-        if let adAttribute = message.adAttribute, adAttribute.canReport {
+        if let adAttribute = message.aygVisibleAdAttribute, adAttribute.canReport {
             hasMore = true
         }
         
@@ -162,7 +162,7 @@ public class ChatMessageShareButton: ASDisplayNode {
                 } else {
                     updatedIconImage = PresentationResourcesChat.chatFreeCollapseButtonIcon(presentationData.theme.theme, wallpaper: presentationData.theme.wallpaper)
                 }
-            } else if let _ = message.adAttribute {
+            } else if let _ = message.aygVisibleAdAttribute {
                 updatedIconImage = PresentationResourcesChat.chatFreeCloseButtonIcon(presentationData.theme.theme, wallpaper: presentationData.theme.wallpaper)
                 updatedIconOffset = CGPoint(x: UIScreenPixel, y: UIScreenPixel)
                 
@@ -205,7 +205,7 @@ public class ChatMessageShareButton: ASDisplayNode {
             
             // VoiceOver: the icon-only button is named by what it does (it was an unlabelled element).
             var topLabel: String?
-            if isSummarize || message.adAttribute != nil {
+            if isSummarize || message.aygVisibleAdAttribute != nil {
                 topLabel = nil
             } else if case let .customChatContents(contents) = subject, case .hashTagSearch = contents.kind {
                 topLabel = presentationData.strings.SharedMedia_ViewInChat

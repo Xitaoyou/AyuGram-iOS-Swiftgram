@@ -463,7 +463,7 @@ private func contentNodeMessagesAndClassesForItem(_ item: ChatMessageItem) -> ([
             needReactions = false
         }
         
-        if message.adAttribute != nil {
+        if message.aygVisibleAdAttribute != nil {
             result.removeAll()
 
             result.append((message, ChatMessageWebpageBubbleContentNode.self, itemAttributes, BubbleItemAttributes(isAttachment: false, neighborType: .text, neighborSpacing: .default)))
@@ -1961,7 +1961,7 @@ public class ChatMessageBubbleItemNode: ChatMessageItemView, ChatMessagePreviewI
                 ignoreForward = true
                 effectiveAuthor = TelegramUser(id: PeerId(namespace: Namespaces.Peer.Empty, id: PeerId.Id._internalFromInt64Value(Int64(authorSignature.persistentHashValue % 32))), accessHash: nil, firstName: authorSignature, lastName: nil, username: nil, phone: nil, photo: [], botInfo: nil, restrictionInfo: nil, flags: [], emojiStatus: nil, usernames: [], storiesHidden: nil, nameColor: nil, backgroundEmojiId: nil, profileColor: nil, profileBackgroundEmojiId: nil, subscriberCount: nil, verificationIconFileId: nil)
                 displayAuthorInfo = !mergedTop.merged && incoming
-            } else if let _ = item.content.firstMessage.adAttribute, let author = item.content.firstMessage.author {
+            } else if let _ = item.content.firstMessage.aygVisibleAdAttribute, let author = item.content.firstMessage.author {
                 ignoreForward = true
                 effectiveAuthor = author
                 displayAuthorInfo = !mergedTop.merged && incoming
@@ -2105,7 +2105,7 @@ public class ChatMessageBubbleItemNode: ChatMessageItemView, ChatMessagePreviewI
         var sgLocalNeedsQuickTranslateButton = false /* SGSimpleSettings.defaultValues[SGSimpleSettings.Keys.quickTranslateButton.rawValue] as! Bool*/
         if let strongSelf = selfReference.value {
             if strongSelf.needsQuickTranslateButton {
-                if incoming && !item.message.text.isEmpty && item.message.adAttribute == nil {
+                if incoming && !item.message.text.isEmpty && item.message.aygVisibleAdAttribute == nil {
                     sgLocalNeedsQuickTranslateButton = true
                 }
             }
@@ -2218,7 +2218,7 @@ public class ChatMessageBubbleItemNode: ChatMessageItemView, ChatMessagePreviewI
             needsShareButton = false
             needsSummarizeButton = false
         }
-        let isAd = item.content.firstMessage.adAttribute != nil
+        let isAd = item.content.firstMessage.aygVisibleAdAttribute != nil
         if isAd {
             needsShareButton = true
         }
@@ -2743,7 +2743,7 @@ public class ChatMessageBubbleItemNode: ChatMessageItemView, ChatMessagePreviewI
         var authorVerificationIcon: EmojiStatusComponent.Content?
         
         let displayEphemeralBadge: Bool
-        if ephemeralBadgeText != nil && !mergedTop.merged && !hidesHeaders && item.message.adAttribute == nil {
+        if ephemeralBadgeText != nil && !mergedTop.merged && !hidesHeaders && item.message.aygVisibleAdAttribute == nil {
             if let backgroundHiding, case .always = backgroundHiding {
                 displayEphemeralBadge = false
             } else {
@@ -2758,7 +2758,7 @@ public class ChatMessageBubbleItemNode: ChatMessageItemView, ChatMessagePreviewI
             ignoreNameHiding = true
         }
         var initialDisplayHeader = true
-        if hidesHeaders || item.message.adAttribute != nil {
+        if hidesHeaders || item.message.aygVisibleAdAttribute != nil {
             initialDisplayHeader = false
         } else if let backgroundHiding, case .always = backgroundHiding {
             if bubbleStyle.isBubbleless {
@@ -2787,7 +2787,7 @@ public class ChatMessageBubbleItemNode: ChatMessageItemView, ChatMessagePreviewI
             initialDisplayHeader = true
         }
         
-        if let peer = firstMessage.peers[firstMessage.id.peerId] as? TelegramChannel, case .broadcast = peer.info, item.content.firstMessage.adAttribute == nil {
+        if let peer = firstMessage.peers[firstMessage.id.peerId] as? TelegramChannel, case .broadcast = peer.info, item.content.firstMessage.aygVisibleAdAttribute == nil {
             let peer = (peer as Peer)
             let nameColors: PeerNameColors.Colors?
             switch peer.nameColor {
@@ -2825,7 +2825,7 @@ public class ChatMessageBubbleItemNode: ChatMessageItemView, ChatMessagePreviewI
             displayAuthorInfo = false
         }
         if initialDisplayHeader && displayAuthorInfo {
-            if let peer = firstMessage.peers[firstMessage.id.peerId] as? TelegramChannel, case .broadcast = peer.info, item.content.firstMessage.adAttribute == nil, !overrideEffectiveAuthor {
+            if let peer = firstMessage.peers[firstMessage.id.peerId] as? TelegramChannel, case .broadcast = peer.info, item.content.firstMessage.aygVisibleAdAttribute == nil, !overrideEffectiveAuthor {
                 authorNameString = EnginePeer(peer).displayTitle(strings: item.presentationData.strings, displayOrder: item.presentationData.nameDisplayOrder)
                 
                 let peer = (peer as Peer)
@@ -3257,7 +3257,7 @@ public class ChatMessageBubbleItemNode: ChatMessageItemView, ChatMessagePreviewI
                     boostBadgeWidth = 14.0
                 }
                 
-                let closeButtonWidth: CGFloat = item.message.adAttribute != nil ? 18.0 : 0.0
+                let closeButtonWidth: CGFloat = item.message.aygVisibleAdAttribute != nil ? 18.0 : 0.0
                 
                 let verificationIconWidth = ChatMessageAuthorVerificationIcon.leadingWidth(iconSize: authorVerificationIcon != nil ? ChatMessageAuthorVerificationIcon.size : nil)
                 
@@ -5227,7 +5227,7 @@ public class ChatMessageBubbleItemNode: ChatMessageItemView, ChatMessagePreviewI
                 strongSelf.rankBackgroundNode = nil
             }
             
-            if let _ = item.message.adAttribute {
+            if let _ = item.message.aygVisibleAdAttribute {
                 let buttonNode: HighlightTrackingButtonNode
                 let iconNode: ASImageNode
                 if let currentButton = strongSelf.closeButtonNode, let currentIcon = strongSelf.closeIconNode {
@@ -6221,7 +6221,7 @@ public class ChatMessageBubbleItemNode: ChatMessageItemView, ChatMessagePreviewI
         
         // MARK: Swiftgram
         // TODO(swiftgram): Move business-logic up to hierarchy
-        if strongSelf.needsQuickTranslateButton && incoming && !item.message.text.isEmpty && item.message.adAttribute == nil {
+        if strongSelf.needsQuickTranslateButton && incoming && !item.message.text.isEmpty && item.message.aygVisibleAdAttribute == nil {
             if strongSelf.quickTranslateButtonNode == nil {
                 let quickTranslateButtonNode = ChatMessageShareButton()
                 strongSelf.quickTranslateButtonNode = quickTranslateButtonNode
@@ -6467,7 +6467,7 @@ public class ChatMessageBubbleItemNode: ChatMessageItemView, ChatMessagePreviewI
                 
                 var buttonFrame = CGRect(origin: CGPoint(x: !incoming ? backgroundFrame.minX - buttonSize.width - 8.0 : (bubblelessSideButtonsX ?? backgroundFrame.maxX + 8.0), y: backgroundFrame.maxY - buttonSize.width - 1.0), size: buttonSize)
                 
-                if item.message.adAttribute != nil {
+                if item.message.aygVisibleAdAttribute != nil {
                     buttonFrame.origin.y = backgroundFrame.minY + 1.0
                 }
                 
@@ -6548,7 +6548,7 @@ public class ChatMessageBubbleItemNode: ChatMessageItemView, ChatMessagePreviewI
                 
                 var buttonFrame = CGRect(origin: CGPoint(x: !incoming ? backgroundFrame.minX - buttonSize.width - 8.0 : (bubblelessSideButtonsX ?? backgroundFrame.maxX + 8.0), y: backgroundFrame.maxY - buttonSize.width - 1.0), size: buttonSize)
                 
-                if item.message.adAttribute != nil {
+                if item.message.aygVisibleAdAttribute != nil {
                     buttonFrame.origin.y = backgroundFrame.minY + 1.0
                 }
                 
@@ -7835,7 +7835,7 @@ public class ChatMessageBubbleItemNode: ChatMessageItemView, ChatMessagePreviewI
                         canHaveSelection = false
                     }
                 }
-                if message.adAttribute != nil {
+                if message.aygVisibleAdAttribute != nil {
                     canHaveSelection = false
                 }
             default:
@@ -8215,7 +8215,7 @@ public class ChatMessageBubbleItemNode: ChatMessageItemView, ChatMessagePreviewI
     
     @objc private func shareButtonPressed() {
         if let item = self.item {
-            if item.message.adAttribute != nil {
+            if item.message.aygVisibleAdAttribute != nil {
                 item.controllerInteraction.openNoAdsDemo()
             } else if case let .customChatContents(contents) = item.associatedData.subject, case .hashTagSearch = contents.kind {
                 item.controllerInteraction.navigateToMessage(item.content.firstMessage.id, item.content.firstMessage.id, NavigateToMessageParams(timestamp: nil, quote: nil, forceNew: true))
@@ -9195,7 +9195,7 @@ public class ChatMessageBubbleItemNode: ChatMessageItemView, ChatMessagePreviewI
             }
         }
         
-        if item.message.adAttribute != nil {
+        if item.message.aygVisibleAdAttribute != nil {
             let transition: ContainedViewLayoutTransition = isScroll ? .animated(duration: 0.25, curve: .easeInOut) : .immediate
             if case let .visible(_, rect) = self.visibility, rect.height >= 1.0 {
                 transition.updateAlpha(layer: self.layer, alpha: 1.0)

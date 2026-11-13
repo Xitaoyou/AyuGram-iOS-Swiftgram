@@ -279,10 +279,16 @@ final class TextProcessingTranslateContentComponent: Component {
                 
                 if let mappedMode {
                     component.externalState.isProcessing = true
+                    component.externalState.sectionFooter = nil
                     self.processDisposable = (component.context.engine.messages.composeAIMessage(
                         text: component.inputText,
                         mode: mappedMode
-                    ) |> deliverOnMainQueue).startStrict(next: { [weak self] processedText in
+                    )
+                    // AYG: this is a server-side Premium RPC. When it never
+                    // answers, the Lottie spinner used to loop forever with no
+                    // error state. Bound it and fall back to the original text.
+                    |> timeout(15.0, queue: Queue.concurrentDefaultQueue(), alternate: Signal<TelegramAIComposeMessageResult, TelegramAIComposeMessageError>.fail(.generic))
+                    |> deliverOnMainQueue).startStrict(next: { [weak self] processedText in
                         guard let self, let component = self.component else {
                             return
                         }
@@ -296,6 +302,13 @@ final class TextProcessingTranslateContentComponent: Component {
                             return
                         }
                         component.externalState.isProcessing = false
+                        // AYG: always leave a usable failure state. Show the
+                        // original text plus an inline notice instead of an
+                        // endless spinner when the AI RPC fails or times out.
+                        component.externalState.result = (result.language, component.inputText, [])
+                        component.externalState.sectionFooter = AnyComponentWithIdentity(id: "ayg_ai_compose_failed", component: AnyComponent(MultilineTextComponent(
+                            text: .plain(NSAttributedString(string: component.strings.Common_ActionNotAllowedError, font: Font.regular(13.0), textColor: component.theme.list.freeTextColor))
+                        )))
                         if case .nonPremiumFlood = error {
                             component.externalState.nonPremiumFloodTriggered = true
                         }

@@ -127,7 +127,7 @@ public func stringForMessageTimestampStatus(
     associatedData: ChatMessageItemAssociatedData,
     ignoreAuthor: Bool = false
 ) -> String {
-    if let adAttribute = message.adAttribute {
+    if let adAttribute = message.aygVisibleAdAttribute {
         switch adAttribute.messageType {
         case .sponsored:
             return strings.Message_SponsoredLabel

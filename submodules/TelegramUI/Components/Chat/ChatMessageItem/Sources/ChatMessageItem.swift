@@ -185,7 +185,7 @@ public func hasCommentButton(item: ChatMessageItem) -> Bool {
         hasDiscussion = false
     }
 
-    if firstMessage.adAttribute != nil {
+    if firstMessage.aygVisibleAdAttribute != nil {
         hasDiscussion = false
     }
     

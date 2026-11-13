@@ -43,7 +43,7 @@ final class ChatMessageContextExtractedContentSource: ContextExtractedContentSou
     private let snapshot: Bool
     
     var shouldBeDismissed: Signal<Bool, NoError> {
-        if self.message.adAttribute != nil {
+        if self.message.aygVisibleAdAttribute != nil {
             return .single(false)
         }
         if let chatController = self.chatController, case .customChatContents = chatController.subject {
@@ -457,7 +457,7 @@ final class ChatMessageReactionContextExtractedContentSource: ContextExtractedCo
     private let contentView: ContextExtractedContentContainingView
     
     var shouldBeDismissed: Signal<Bool, NoError> {
-        if self.message.adAttribute != nil {
+        if self.message.aygVisibleAdAttribute != nil {
             return .single(false)
         }
         

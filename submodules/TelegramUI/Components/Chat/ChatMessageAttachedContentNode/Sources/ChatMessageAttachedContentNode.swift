@@ -203,7 +203,7 @@ public final class ChatMessageAttachedContentNode: ASDisplayNode {
         return { [weak self] presentationData, automaticDownloadSettings, associatedData, attributes, context, controllerInteraction, message, messageRead, chatLocation, title, titleBadge, subtitle, text, entities, mediaAndFlags, mediaBadge, actionIcon, actionTitle, displayLine, layoutConstants, preparePosition, constrainedSize, animationCache, animationRenderer in
             let isPreview = presentationData.isPreview
             let fontSize: CGFloat
-            if message.adAttribute != nil {
+            if message.aygVisibleAdAttribute != nil {
                 fontSize = floor(presentationData.fontSize.baseDisplaySize * 15.0 / 17.0)
             } else {
                 fontSize = floor(presentationData.fontSize.baseDisplaySize * 14.0 / 17.0)
@@ -237,7 +237,7 @@ public final class ChatMessageAttachedContentNode: ASDisplayNode {
                 bubbleStyle = chatMessageBubbleStyle(bubbleMode: false, isMessageOptions: isMessageOptions, incoming: incoming, message: message)
             }
             
-            let isAd = message.adAttribute != nil
+            let isAd = message.aygVisibleAdAttribute != nil
             
             var isReplyThread = false
             if case .replyThread = chatLocation {
@@ -348,7 +348,7 @@ public final class ChatMessageAttachedContentNode: ASDisplayNode {
                     flags.remove(.preferMediaInline)
                     mediaAndFlags = (mediaAndFlagsValue.0, flags)
                 }
-                if let adAttribute = message.adAttribute, adAttribute.hasContentMedia {
+                if let adAttribute = message.aygVisibleAdAttribute, adAttribute.hasContentMedia {
                     var flags = mediaAndFlagsValue.1
                     flags.remove(.preferMediaInline)
                     flags.insert(.preferMediaBeforeText)
@@ -772,7 +772,7 @@ public final class ChatMessageAttachedContentNode: ASDisplayNode {
                 } else if case let .linear(_, bottom) = position {
                     switch bottom {
                     case .None, .Neighbour(_, .footer, _):
-                        if message.adAttribute == nil {
+                        if message.aygVisibleAdAttribute == nil {
                             let statusLayoutAndContinueValue = makeStatusLayout(ChatMessageDateAndStatusNode.Arguments(
                                 context: context,
                                 presentationData: presentationData,
@@ -1577,7 +1577,7 @@ public final class ChatMessageAttachedContentNode: ASDisplayNode {
                             statusNode.removeFromSupernode()
                         }
                         
-                        if message.adAttribute != nil {
+                        if message.aygVisibleAdAttribute != nil {
                             if self.tapRecognizer == nil {
                                 let tapRecognizer = UITapGestureRecognizer(target: self, action: #selector(self.tapGesture(_:)))
                                 self.tapRecognizer = tapRecognizer
@@ -1659,7 +1659,7 @@ public final class ChatMessageAttachedContentNode: ASDisplayNode {
             return
         }
         if case .ended = recognizer.state {
-            if message.adAttribute != nil {
+            if message.aygVisibleAdAttribute != nil {
                 self.activateAction?()
             }
         }
@@ -1743,7 +1743,7 @@ public final class ChatMessageAttachedContentNode: ASDisplayNode {
         }
         
         if let backgroundView = self.backgroundView, backgroundView.frame.contains(point) {
-            if let message = self.message, message.adAttribute != nil {
+            if let message = self.message, message.aygVisibleAdAttribute != nil {
                 return ChatMessageBubbleContentTapAction(content: .none)
             } else {
                 return self.defaultContentAction()

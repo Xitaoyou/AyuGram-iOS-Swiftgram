@@ -1400,7 +1400,7 @@ public final class ChatHistoryListNodeImpl: ASDisplayNode, ChatHistoryNode, Chat
                 self.allAdMessages = (messages.first, [], 0)
             } else {
                 var adPeerName: String?
-                if let adAttribute = messages.first?.adAttribute, let parsedUrl = parseAdUrl(sharedContext: self.context.sharedContext, context: self.context, url: adAttribute.url), case let .peer(reference, _) = parsedUrl, case let .name(peerName) = reference {
+                if let adAttribute = messages.first?.aygVisibleAdAttribute, let parsedUrl = parseAdUrl(sharedContext: self.context.sharedContext, context: self.context, url: adAttribute.url), case let .peer(reference, _) = parsedUrl, case let .name(peerName) = reference {
                     adPeerName = peerName
                 }
                 
@@ -2023,13 +2023,13 @@ public final class ChatHistoryListNodeImpl: ASDisplayNode, ChatHistoryNode, Chat
                             loop: for index in visibleRange.firstIndex ..< filteredEntries.count {
                                 switch filteredEntries[filteredEntries.count - 1 - index] {
                                 case let .MessageEntry(message, _, _, _, _, _):
-                                    if message.adAttribute == nil {
+                                    if message.aygVisibleAdAttribute == nil {
                                         anchorIndex = message.index
                                         break loop
                                     }
                                 case let .MessageGroupEntry(_, messages, _):
                                     for (message, _, _, _, _) in messages {
-                                        if message.adAttribute == nil {
+                                        if message.aygVisibleAdAttribute == nil {
                                             anchorIndex = message.index
                                             break loop
                                         }
@@ -2470,7 +2470,7 @@ public final class ChatHistoryListNodeImpl: ASDisplayNode, ChatHistoryNode, Chat
                         var previousNumAds = 0
                         for entry in previous.filteredEntries {
                             if case let .MessageEntry(message, _, _, _, _, _) = entry {
-                                if message.adAttribute != nil {
+                                if message.aygVisibleAdAttribute != nil {
                                     previousNumAds += 1
                                 }
                             }
@@ -2480,7 +2480,7 @@ public final class ChatHistoryListNodeImpl: ASDisplayNode, ChatHistoryNode, Chat
                         var firstNonAdIndex: MessageIndex?
                         for entry in processedView.filteredEntries.reversed() {
                             if case let .MessageEntry(message, _, _, _, _, _) = entry {
-                                if message.adAttribute != nil {
+                                if message.aygVisibleAdAttribute != nil {
                                     updatedNumAds += 1
                                 } else {
                                     if firstNonAdIndex == nil {
@@ -2506,7 +2506,7 @@ public final class ChatHistoryListNodeImpl: ASDisplayNode, ChatHistoryNode, Chat
                             if let action = message.media.first(where: { $0 is TelegramMediaAction }) as? TelegramMediaAction, case .joinedChannel = action.action {
                                 hadJoin = true
                                 break
-                            } else if message.adAttribute != nil {
+                            } else if message.aygVisibleAdAttribute != nil {
                                 hadAd = true
                             }
                         }
@@ -2515,7 +2515,7 @@ public final class ChatHistoryListNodeImpl: ASDisplayNode, ChatHistoryNode, Chat
                     if !hadJoin && hadAd {
                         for entry in processedView.filteredEntries.reversed() {
                             if case let .MessageEntry(message, _, _, _, _, _) = entry {
-                                if message.adAttribute == nil {
+                                if message.aygVisibleAdAttribute == nil {
                                     if let action = message.media.first(where: { $0 is TelegramMediaAction }) as? TelegramMediaAction, case .joinedChannel = action.action {
                                         updatedScrollPosition = .index(subject: MessageHistoryScrollToSubject(index: .message(message.index), quote: nil), position: .top(0.0), directionHint: .Up, animated: true, highlight: false, displayLink: false, setupReply: false)
                                         updatedScrollPositionHolds = false
@@ -3077,7 +3077,7 @@ public final class ChatHistoryListNodeImpl: ASDisplayNode, ChatHistoryNode, Chat
                     customTags: initialMessage.customTags,
                     forwardInfo: initialMessage.forwardInfo,
                     author: initialMessage.author,
-                    text: /*"\(initialMessage.adAttribute!.opaqueId.hashValue)" + */initialMessage.text,
+                    text: /*"\(initialMessage.aygVisibleAdAttribute!.opaqueId.hashValue)" + */initialMessage.text,
                     attributes: initialMessage.attributes,
                     media: initialMessage.media,
                     peers: initialMessage.peers,
@@ -3090,7 +3090,7 @@ public final class ChatHistoryListNodeImpl: ASDisplayNode, ChatHistoryNode, Chat
                 self.nextPendingDynamicMessageId += 1
                 
                 var allAdMessages = self.allAdMessages
-                if allAdMessages.fixed?.adAttribute?.opaqueId == message.adAttribute?.opaqueId {
+                if allAdMessages.fixed?.aygVisibleAdAttribute?.opaqueId == message.aygVisibleAdAttribute?.opaqueId {
                     allAdMessages.fixed = self.pendingDynamicAdMessages.first?.withUpdatedStableVersion(stableVersion: UInt32(self.nextPendingDynamicMessageId))
                 }
                 allAdMessages.opportunistic.append(message)
@@ -3103,7 +3103,7 @@ public final class ChatHistoryListNodeImpl: ASDisplayNode, ChatHistoryNode, Chat
     
     func markAdAsSeen(opaqueId: Data) {
         for i in 0 ..< self.pendingDynamicAdMessages.count {
-            if let pendingAttribute = self.pendingDynamicAdMessages[i].adAttribute, pendingAttribute.opaqueId == opaqueId {
+            if let pendingAttribute = self.pendingDynamicAdMessages[i].aygVisibleAdAttribute, pendingAttribute.opaqueId == opaqueId {
                 self.pendingDynamicAdMessages.remove(at: i)
                 break
             }
@@ -3143,7 +3143,7 @@ public final class ChatHistoryListNodeImpl: ASDisplayNode, ChatHistoryNode, Chat
                     for i in (wideIndexRange.0 ... wideIndexRange.1) {
                         switch historyView.filteredEntries[i] {
                         case let .MessageEntry(message, _, _, _, _, _):
-                            guard message.adAttribute == nil && message.id.namespace == Namespaces.Message.Cloud else {
+                            guard message.aygVisibleAdAttribute == nil && message.id.namespace == Namespaces.Message.Cloud else {
                                 continue
                             }
                             guard message.author?.id != self.context.account.peerId else {
@@ -3161,7 +3161,7 @@ public final class ChatHistoryListNodeImpl: ASDisplayNode, ChatHistoryNode, Chat
                             }
                         case let .MessageGroupEntry(_, messages, _):
                             for (message, _, _, _, _) in messages {
-                                guard message.adAttribute == nil && message.id.namespace == Namespaces.Message.Cloud else {
+                                guard message.aygVisibleAdAttribute == nil && message.id.namespace == Namespaces.Message.Cloud else {
                                     continue
                                 }
                                 guard message.author?.id != self.context.account.peerId else {
@@ -5125,7 +5125,7 @@ public final class ChatHistoryListNodeImpl: ASDisplayNode, ChatHistoryNode, Chat
                 loop: for entry in historyView.filteredEntries.reversed() {
                     if index >= visibleRange.firstIndex && index <= visibleRange.lastIndex {
                         if case let .MessageEntry(message, _, _, _, _, _) = entry {
-                            if message.adAttribute != nil {
+                            if message.aygVisibleAdAttribute != nil {
                                 continue
                             }
                             if index != 0 || historyView.originalView.laterId != nil {

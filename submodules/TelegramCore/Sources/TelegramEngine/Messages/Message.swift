@@ -1,4 +1,5 @@
 import Postbox
+import SGSimpleSettings
 
 public final class EngineMessage: Equatable {
     public static let newTopicThreadId: Int64 = Message.newTopicThreadId
@@ -262,6 +263,11 @@ public extension EngineMessage {
 
     var adAttribute: AdMessageAttribute? {
         return self._asMessage().adAttribute
+    }
+
+    // AYG: see Message.aygVisibleAdAttribute.
+    var aygVisibleAdAttribute: AdMessageAttribute? {
+        return self._asMessage().aygVisibleAdAttribute
     }
 
     func effectivelyIncoming(_ accountPeerId: EnginePeer.Id) -> Bool {

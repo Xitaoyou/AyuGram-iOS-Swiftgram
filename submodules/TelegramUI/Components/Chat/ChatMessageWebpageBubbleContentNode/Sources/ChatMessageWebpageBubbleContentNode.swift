@@ -91,7 +91,7 @@ public final class ChatMessageWebpageBubbleContentNode: ChatMessageBubbleContent
                     case .automaticPlayback:
                         openChatMessageMode = .automaticPlayback
                 }
-                if let adAttribute = item.message.adAttribute, adAttribute.hasContentMedia {
+                if let adAttribute = item.message.aygVisibleAdAttribute, adAttribute.hasContentMedia {
                     openChatMessageMode = .automaticPlayback
                 }
                 if !item.controllerInteraction.openMessage(item.message, OpenMessageParams(mode: openChatMessageMode)) {
@@ -120,7 +120,7 @@ public final class ChatMessageWebpageBubbleContentNode: ChatMessageBubbleContent
                 if strongSelf.isFromSuspiciousSender(item) {
                     return
                 }
-                if let _ = item.message.adAttribute {
+                if let _ = item.message.aygVisibleAdAttribute {
                     item.controllerInteraction.activateAdAction(item.message.id, strongSelf.contentNode.makeProgress(), false, false)
                 } else {
                     var webPageContent: TelegramMediaWebpageLoadedContent?
@@ -576,7 +576,7 @@ public final class ChatMessageWebpageBubbleContentNode: ChatMessageBubbleContent
                         }
                     }
                 }
-            } else if let adAttribute = item.message.adAttribute {
+            } else if let adAttribute = item.message.aygVisibleAdAttribute {
                 switch adAttribute.messageType {
                 case .sponsored:
                     title = item.presentationData.strings.Message_AdSponsoredLabel
@@ -702,7 +702,7 @@ public final class ChatMessageWebpageBubbleContentNode: ChatMessageBubbleContent
             let contentNodeFrame = self.contentNode.frame
             let result = self.contentNode.tapActionAtPoint(point.offsetBy(dx: -contentNodeFrame.minX, dy: -contentNodeFrame.minY), gesture: gesture, isEstimating: isEstimating)
 
-            if item.message.adAttribute != nil {
+            if item.message.aygVisibleAdAttribute != nil {
                 if case .none = result.content {
                     if self.contentNode.hasActionAtPoint(point.offsetBy(dx: -contentNodeFrame.minX, dy: -contentNodeFrame.minY)) {
                         return ChatMessageBubbleContentTapAction(content: .ignore)

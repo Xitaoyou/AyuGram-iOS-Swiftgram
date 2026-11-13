@@ -562,7 +562,7 @@ private final class AdsInfoSheetComponent: CombinedComponent {
             }
 
             let rightItem: AnyComponent<Empty>?
-            if case .bot = context.component.mode, context.component.message?.adAttribute != nil {
+            if case .bot = context.component.mode, context.component.message?.aygVisibleAdAttribute != nil {
                 rightItem = AnyComponent(
                     GlassBarButtonComponent(
                         size: CGSize(width: 44.0, height: 44.0),
@@ -778,7 +778,7 @@ public final class AdsInfoScreen: ViewControllerComponentContainer {
         guard
             let referenceView = self.node.hostView.findTaggedView(tag: moreTag),
             let message = self.message,
-            let adAttribute = message.adAttribute
+            let adAttribute = message.aygVisibleAdAttribute
         else {
             return
         }

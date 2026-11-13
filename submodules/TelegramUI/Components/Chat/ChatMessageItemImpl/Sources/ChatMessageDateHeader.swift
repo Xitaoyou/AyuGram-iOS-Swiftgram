@@ -1033,7 +1033,7 @@ public final class ChatMessageAvatarHeader: ListViewItemHeader {
         self.peerId = peerId
         self.peer = peer
         self.messageReference = messageReference
-        if message.adAttribute != nil {
+        if message.aygVisibleAdAttribute != nil {
             self.adMessageId = message.id
         } else {
             self.adMessageId = nil

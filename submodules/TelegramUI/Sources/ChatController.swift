@@ -3943,7 +3943,7 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
                     return .none
                 }
             } else {
-                if message.adAttribute != nil {
+                if message.aygVisibleAdAttribute != nil {
                     return .none
                 }
                 if !message.flags.contains(.Incoming) {
@@ -5194,7 +5194,7 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
                 message = panelMessage
             }
                 
-            guard let message, let adAttribute = message.adAttribute else {
+            guard let message, let adAttribute = message.aygVisibleAdAttribute else {
                 return
             }
             
@@ -5450,11 +5450,11 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
                 
                 var adOpaqueId: Data?
                 self.chatDisplayNode.historyNode.forEachVisibleMessageItemNode { itemView in
-                    if let adAttribute = itemView.item?.message.adAttribute {
+                    if let adAttribute = itemView.item?.message.aygVisibleAdAttribute {
                         adOpaqueId = adAttribute.opaqueId
                     }
                 }
-                if adOpaqueId == nil, let panelMessage = self.chatDisplayNode.adPanelMessage, let adAttribute = panelMessage.adAttribute {
+                if adOpaqueId == nil, let panelMessage = self.chatDisplayNode.adPanelMessage, let adAttribute = panelMessage.aygVisibleAdAttribute {
                     adOpaqueId = adAttribute.opaqueId
                 }
                 let _ = self.context.engine.accountData.updateAdMessagesEnabled(enabled: false).start()

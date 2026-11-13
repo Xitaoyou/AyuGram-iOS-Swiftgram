@@ -193,7 +193,7 @@ final class ChatAdPanelNode: ASDisplayNode {
     private var theme: PresentationTheme?
     
     @objc private func closePressed() {
-        /*if self.context.isPremium, let adAttribute = self.message?.adAttribute {
+        /*if self.context.isPremium, let adAttribute = self.message?.aygVisibleAdAttribute {
             self.controllerInteraction?.removeAd(adAttribute.opaqueId)
         } else {
             self.controllerInteraction?.openNoAdsDemo()
