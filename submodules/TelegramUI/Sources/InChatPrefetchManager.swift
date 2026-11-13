@@ -106,6 +106,12 @@ final class InChatPrefetchManager {
             }
             
             validIds.insert(id)
+            // AYG: leave headroom in the download queue for the media the user
+            // actually opens. A fast scroll previously enqueued every visible
+            // file at once, starving the file that was just tapped.
+            if self.contexts[id] == nil && self.contexts.count >= 6 {
+                continue
+            }
             let context: PrefetchMediaContext
             if let current = self.contexts[id] {
                 context = current

@@ -13,7 +13,7 @@ spec.loader.exec_module(branding)
 
 
 class BrandingArtifactTests(unittest.TestCase):
-    def ipa(self, path, name='AyuGram', icons=True, images=True, correct_size=True, optimized=False, official=True):
+    def ipa(self, path, name='AyugramXi', icons=True, images=True, correct_size=True, optimized=False, official=True):
         info = {'CFBundleDisplayName': name}
         keys = ['AyuClassic', 'AyuPurple', 'AyuRed'] + (branding.OFFICIAL_ICONS if official else [])
         if icons:

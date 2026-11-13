@@ -669,7 +669,7 @@ plist_fragment(
     template =
     """
     <key>CFBundleDisplayName</key>
-    <string>AyuGram</string>
+    <string>AyugramXi</string>
     """
 )
 
@@ -1573,7 +1573,7 @@ plist_fragment(
     <key>CFBundleName</key>
     <string>AyuGram</string>
     <key>CFBundleDisplayName</key>
-    <string>Open in AyuGram</string>
+    <string>Open in AyugramXi</string>
     <key>CFBundlePackageType</key>
     <string>XPC!</string>
 	<key>NSExtension</key>
@@ -1873,11 +1873,11 @@ plist_fragment(
     <key>CFBundleDevelopmentRegion</key>
     <string>en</string>
     <key>CFBundleDisplayName</key>
-    <string>AyuGram</string>
+    <string>AyugramXi</string>
     <key>CFBundleIdentifier</key>
     <string>{telegram_bundle_id}</string>
     <key>CFBundleName</key>
-    <string>AyuGram</string>
+    <string>AyugramXi</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleSignature</key>

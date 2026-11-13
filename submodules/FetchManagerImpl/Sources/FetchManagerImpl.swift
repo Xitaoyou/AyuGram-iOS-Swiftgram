@@ -233,7 +233,7 @@ private final class FetchManagerCategoryContext {
                     } else {
                         var resultRanges: [(Range<Int64>, MediaBoxFetchPriority)] = []
                         for range in ranges.ranges {
-                            resultRanges.append((range, .default))
+                            resultRanges.append((range, entry.elevatedPriorityReferenceCount > 0 ? .elevated : .default))
                         }
                         parsedRanges = resultRanges
                     }
@@ -352,7 +352,7 @@ private final class FetchManagerCategoryContext {
                 } else {
                     var resultRanges: [(Range<Int64>, MediaBoxFetchPriority)] = []
                     for range in ranges.ranges {
-                        resultRanges.append((range, .default))
+                        resultRanges.append((range, entry.elevatedPriorityReferenceCount > 0 ? .elevated : .default))
                     }
                     parsedRanges = resultRanges
                 }
