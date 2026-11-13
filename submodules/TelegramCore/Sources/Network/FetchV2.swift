@@ -106,8 +106,13 @@ private let fetchV2RefreshedFileReferences = Atomic<Set<String>>(value: Set())
 
 private let fastDownloadMasterPendingParts = 16
 private let fastDownloadCdnPendingParts = 32
-private let fastDownloadInitialWindow = 6
+// AYG: the throttle is per in-flight upload.getFile request, not per byte.
+// Start closer to the account's usable ceiling so the ramp-up does not waste
+// the first seconds of every download; processFloodWaitError learns the real
+// ceiling and adaptWindow never climbs above it.
+private let fastDownloadInitialWindow = 8
 private let fastDownloadMinWindow = 2
+private let fastDownloadCeilingProbeInterval: Double = 60.0
 private let fastDownloadFastPartLatency = 1.0
 private let fastDownloadSlowPartLatency = 2.0
 private let fastDownloadSmallPartSize: Int64 = 128 * 1024
@@ -437,6 +442,12 @@ private final class FetchImpl {
         private let masterPendingParts: Int
         private let cdnPendingParts: Int
         private var cdnDisabled: Bool = false
+        // AYG: the largest window the account tolerated before a 420. Raising
+        // the static ceiling blindly just provokes FLOOD_PREMIUM_WAIT and a
+        // multi-second stall, which is slower than backing off. Remember the
+        // safe value, run right up against it, and probe upward slowly.
+        private var learnedWindowCeiling: Int? = nil
+        private var lastCeilingProbe: Double = 0.0
         private var cdnHashFailures: Int = 0
         private var cdnVerificationFailures: Int = 0
         private var cdnTokenRefreshes: Int = 0
@@ -509,13 +520,20 @@ private final class FetchImpl {
             } else {
                 self.defaultPartSize = getSGDownloadPartSize(128 * 1024, fileSize: self.size)
             }
-            self.cdnPartSize = 128 * 1024
+            // AYG: CDN parts used to be 128KB regardless of the speed tier.
+            // 256KB is still a multiple of cdnHashBlockLength (128KB) and of
+            // partAlignment, so hash verification stays valid while each
+            // request moves twice the bytes under the same request budget.
+            self.cdnPartSize = 256 * 1024
             // AYG: the stock code bypassed getSGMaxPendingParts on the rust
             // engine, so the setting only enlarged partSize (more aggressive)
             // and never applied a working concurrency ceiling.
             let pendingParts = getSGMaxPendingParts(6)
             self.masterPendingParts = self.fastDownloads ? min(fastDownloadMasterPendingParts, pendingParts) : pendingParts
-            self.cdnPendingParts = self.fastDownloads ? min(fastDownloadCdnPendingParts, pendingParts * 2) : pendingParts
+            // AYG: upload.getCdnFile is a separate RPC on a separate DC pool,
+            // so give the CDN lane double the in-flight budget on EVERY engine
+            // instead of only on rust.
+            self.cdnPendingParts = min(fastDownloadCdnPendingParts, pendingParts * 2)
             
             // The resource id tells concurrent downloads apart; an Api value prints only its constructor name.
             self.loggingIdentifier = resource.id.stringRepresentation
@@ -637,9 +655,10 @@ private final class FetchImpl {
                                     self.commitPendingReadyPart(state: state, partRange: pendingReadyPart.partRange, fetchRange: pendingReadyPart.fetchRange, data: pendingReadyPart.cleanData)
                                 } else {
                                     Logger.shared.log("FetchV2", "\(self.loggingIdentifier): unable to find \(pendingReadyPart.fetchRange) hash check failed")
-                                    if self.fastDownloads {
-                                        self.cdnVerificationFailures += 1
-                                    }
+                                    // AYG: CDN is now requested on every engine,
+                                    // so hash failures must be counted here too
+                                    // or the transfer can never fall back.
+                                    self.cdnVerificationFailures += 1
                                 }
                             }
                         }
@@ -649,7 +668,7 @@ private final class FetchImpl {
                     }
                 }
                 
-                if self.fastDownloads, self.cdnVerificationFailures >= maxCdnFailuresBeforeFallback, case let .cdn(cdnData) = state.fetchLocation {
+                if self.cdnVerificationFailures >= maxCdnFailuresBeforeFallback, case let .cdn(cdnData) = state.fetchLocation {
                     self.fallBackToMaster(sourceDatacenterId: cdnData.sourceDatacenterId, reason: "\(self.cdnVerificationFailures) parts failed hash verification")
                     self.update()
                     return
@@ -699,16 +718,11 @@ private final class FetchImpl {
                 // adaptive window behind fastDownloads made every 420 backoff a
                 // no-op on device. Apply it on both engines.
                 maxPendingParts = min(maxPendingParts, state.window)
-                if self.knownSize == nil && state.completedRanges.isEmpty {
-                    // AYG: a fresh resource (a video cover has size == nil) used to be
-                    // limited to one part, so the first frame waited for a serial
-                    // round trip while prefetches filled the queue. Keep the adaptive
-                    // window when fastDownloads is on; otherwise allow a small
-                    // parallel probe window instead of 1.
-                    if !self.fastDownloads {
-                        maxPendingParts = min(maxPendingParts, 4)
-                    }
-                }
+                // AYG: a fresh resource (a video cover has size == nil) used to
+                // be clamped to 4 in-flight parts on iOS. The learned 420
+                // ceiling now protects the account, so let the first burst use
+                // the full adaptive window: this is exactly when the first
+                // frame / preview bytes are needed.
                 
                 if state.pendingParts.count < maxPendingParts && state.pendingReadyParts.count < state.maxPendingParts {
                     var debugRangesString = ""
@@ -993,7 +1007,12 @@ private final class FetchImpl {
                             consumerId: self.consumerId,
                             resourceId: self.resource.id.stringRepresentation,
                             data: Api.functions.upload.getFile(
-                                flags: self.fastDownloads && !self.cdnDisabled ? (1 << 1) : 0,
+                                // AYG: cdn_supported was gated behind the rust
+                                // engine, so iOS never asked for a CDN redirect
+                                // and every part went through the throttled
+                                // main DC. upload.getCdnFile is a different RPC
+                                // on a separate DC pool.
+                                flags: !self.cdnDisabled ? (1 << 1) : 0,
                                 location: inputLocation,
                                 offset: part.fetchRange.lowerBound,
                                 limit: Int32(requestedLength)),
@@ -1104,9 +1123,10 @@ private final class FetchImpl {
                             maxPendingParts: self.cdnPendingParts,
                             decryptionState: nil
                         )
-                        if self.fastDownloads {
-                            cdnState.completedRanges = state.completedRanges
-                        }
+                        // AYG: keep already-downloaded ranges when switching
+                        // to CDN on every engine, not only on rust; otherwise
+                        // iOS re-downloads the head of the file.
+                        cdnState.completedRanges = state.completedRanges
                         self.state = .fetching(cdnState)
                     case let .cdnRefresh(cdnData, refreshToken):
                         if self.fastDownloads {
@@ -1241,7 +1261,17 @@ private final class FetchImpl {
                     state.lastWindowDecrease = now
                 }
             } else if latency < fastDownloadFastPartLatency {
-                state.window = min(state.maxPendingParts, state.window + 1)
+                // AYG: creep back up once a minute in case the account's
+                // throttle budget has recovered, but never jump straight back
+                // into the window that just triggered a 420.
+                if now - self.lastCeilingProbe > fastDownloadCeilingProbeInterval {
+                    self.lastCeilingProbe = now
+                    if let ceiling = self.learnedWindowCeiling {
+                        self.learnedWindowCeiling = min(ceiling + 1, state.maxPendingParts)
+                    }
+                }
+                let ceiling = self.learnedWindowCeiling ?? state.maxPendingParts
+                state.window = min(ceiling, state.window + 2)
             }
             
             state.recentParts.append((now, bytes))
@@ -1254,7 +1284,10 @@ private final class FetchImpl {
             if throughput >= fastDownloadLargePartThroughput {
                 state.partSize = min(state.maxPartSize, fastDownloadLargePartSize)
             } else if throughput < fastDownloadSmallPartThroughput {
-                state.partSize = max(state.minPartSize, fastDownloadSmallPartSize)
+                // AYG: shrinking to 128KB self-locks the download at low
+                // throughput: small parts can never reach the 4MB/s threshold
+                // needed to grow again. Never go below the user-selected tier.
+                state.partSize = max(self.defaultPartSize, fastDownloadSmallPartSize)
             }
         }
         
@@ -1410,6 +1443,10 @@ private final class FetchImpl {
             if case let .fetching(state) = self.state {
                 state.window = max(fastDownloadMinWindow, state.window / 2)
                 state.lastWindowDecrease = CFAbsoluteTimeGetCurrent()
+                // AYG: remember the largest safe window so adaptWindow stops
+                // climbing back into the throttle. The slow probe lets it
+                // recover if the account's budget opens up later.
+                self.learnedWindowCeiling = min(self.learnedWindowCeiling ?? Int.max, state.window)
                 let keepCount = max(1, state.window)
                 if state.pendingParts.count > keepCount {
                     let dropped = Array(state.pendingParts.suffix(from: keepCount))

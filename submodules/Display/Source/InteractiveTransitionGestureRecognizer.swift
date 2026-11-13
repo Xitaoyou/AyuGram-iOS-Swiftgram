@@ -83,7 +83,9 @@ public class InteractiveTransitionGestureRecognizer: UIPanGestureRecognizer {
     private let allowedDirections: (CGPoint) -> InteractiveTransitionGestureRecognizerDirections
     
     private var validatedGesture = false
-    private var minimumCenterMovement: CGFloat = 2.0
+    // AYG: 2pt locked the gesture on a finger's horizontal jitter while
+    // tapping, so a subsequent downward scroll kept driving the pop.
+    private var minimumCenterMovement: CGFloat = 10.0
     private var firstLocation: CGPoint = CGPoint()
     public private(set) var currentAllowedDirections: InteractiveTransitionGestureRecognizerDirections = []
     /// The view whose restrictions (horizontal gestures, `disablesInteractiveTransitionGestureRecognizer…`) apply at a
@@ -104,7 +106,7 @@ public class InteractiveTransitionGestureRecognizer: UIPanGestureRecognizer {
         super.reset()
         
         self.validatedGesture = false
-        self.minimumCenterMovement = 2.0
+        self.minimumCenterMovement = 10.0
         self.currentAllowedDirections = []
     }
 
@@ -127,7 +129,7 @@ public class InteractiveTransitionGestureRecognizer: UIPanGestureRecognizer {
         self.firstLocation = point
         
         if let target = self.gestureRestrictionsHitTest?(self.firstLocation, event) ?? self.view?.hitTest(self.firstLocation, with: event) {
-            self.minimumCenterMovement = max(2.0, interactiveTransitionMinimumMovement(target) ?? 2.0)
+            self.minimumCenterMovement = max(10.0, interactiveTransitionMinimumMovement(target) ?? 10.0)
             let horizontalGestures = hasHorizontalGestures(target, point: self.view?.convert(self.firstLocation, to: target))
             switch horizontalGestures {
             case .some, .strict:
@@ -200,9 +202,15 @@ public class InteractiveTransitionGestureRecognizer: UIPanGestureRecognizer {
                     return
                 }
                 
-                if self.currentAllowedDirections.contains(.rightEdge) && self.firstLocation.x < edgeWidth {
+                // AYG: the stock code accepted any edge start with zero
+                // direction/velocity checks, so a downward scroll beginning
+                // near the left edge immediately started the pop transition.
+                // Require an explicit horizontal intent first.
+                let horizontalIntent = translation.x > self.minimumCenterMovement && absTranslationX > absTranslationY
+                let leftwardIntent = translation.x < -self.minimumCenterMovement && absTranslationX > absTranslationY
+                if self.currentAllowedDirections.contains(.rightEdge) && self.firstLocation.x < edgeWidth && horizontalIntent {
                     self.validatedGesture = true
-                } else if self.currentAllowedDirections.contains(.leftEdge) && self.firstLocation.x > size.width - edgeWidth {
+                } else if self.currentAllowedDirections.contains(.leftEdge) && self.firstLocation.x > size.width - edgeWidth && leftwardIntent {
                     self.validatedGesture = true
                 } else if !self.currentAllowedDirections.contains(.leftCenter) && translation.x < 0.0 {
                     self.state = .failed
@@ -229,6 +237,16 @@ public class InteractiveTransitionGestureRecognizer: UIPanGestureRecognizer {
         }
         
         if self.validatedGesture {
+            // AYG: industry-standard direction lock. Once a horizontal pop
+            // has begun, a clearly vertical continuation (e.g. scrolling the
+            // chat down) must cancel it instead of driving the transition.
+            if !self.currentAllowedDirections.contains(.down) {
+                let velocity = self.velocity(in: self.view)
+                if abs(velocity.y) > abs(velocity.x) * 1.5, abs(velocity.y) > 200.0 {
+                    self.state = .cancelled
+                    return
+                }
+            }
             super.touchesMoved(touches, with: event)
             if fireBegan {
                 if self.state == .possible {

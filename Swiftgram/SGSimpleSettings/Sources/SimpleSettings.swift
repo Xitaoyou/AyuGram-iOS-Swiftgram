@@ -645,16 +645,18 @@ public func getSGDownloadPartSize(_ default: Int64, fileSize: Int64?) -> Int64 {
 }
 
 public func getSGMaxPendingParts(_ default: Int) -> Int {
-    // AYG: these are ceilings, not accelerators. Telegram throttles
-    // non-Premium accounts with FLOOD_PREMIUM_WAIT_* when too many
-    // upload.getFile parts are in flight; raising concurrency made batches
-    // slower. Keep every tier below the server's throttling threshold.
+    // AYG: FLOOD_PREMIUM_WAIT_* counts in-flight upload.getFile requests, so
+    // these are ceilings rather than accelerators. Blindly raising them used
+    // to make batches slower. FetchV2 now learns the account's real ceiling
+    // and backs off before another 420, while CDN runs on its own DC pool and
+    // larger parts move more bytes per request. The top tier can therefore
+    // use the available bandwidth instead of being pinned at 8 parts.
     let currentDownloadSetting = SGSimpleSettings.shared.downloadSpeedBoost
     switch (currentDownloadSetting) {
         case SGSimpleSettings.DownloadSpeedBoostValues.medium.rawValue:
-            return min(`default`, 6)
+            return min(`default` + 2, 10)
         case SGSimpleSettings.DownloadSpeedBoostValues.maximum.rawValue:
-            return min(`default` + 2, 8)
+            return min(`default` + 6, 14)
         default:
             return min(`default`, 4)
     }

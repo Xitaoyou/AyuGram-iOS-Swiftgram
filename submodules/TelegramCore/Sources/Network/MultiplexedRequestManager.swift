@@ -209,7 +209,11 @@ private final class MultiplexedRequestManagerContext {
     private func limits(_ target: MultiplexedRequestTarget) -> (requestsPerWorker: Int, workersPerTarget: Int) {
         switch target {
         case .main:
-            return (3, 4)
+            // AYG: 3x4 = 12 in-flight requests was the transport ceiling for
+            // the main DC, below what a fast connection needs once CDN and
+            // larger parts are in play. This is a capacity, not a rate: the
+            // learned 420 window in FetchV2 still decides the real count.
+            return (4, 6)
         case .cdn:
             return (self.cdnMaxRequestsPerWorker, self.cdnMaxWorkersPerTarget)
         }

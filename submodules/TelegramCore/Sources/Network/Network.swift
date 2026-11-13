@@ -1082,8 +1082,11 @@ public final class Network: NSObject {
         self.networkHelper = networkHelper
         context.add(networkHelper)
         
-        let fastDownloads = engine.kind == .rust
-        self._multiplexedRequestManager = MultiplexedRequestManager(cdnMaxRequestsPerWorker: fastDownloads ? 4 : 3, cdnMaxWorkersPerTarget: fastDownloads ? 8 : 4, takeWorker: { [weak self] target, tag, continueInBackground in
+        // AYG: FetchV2 now asks for cdn_supported on every engine, so the CDN
+        // pool must not stay at the old iOS-only 3x4 downgrade. These are
+        // capacities, not a request rate: the learned window still decides
+        // how many parts are actually in flight.
+        self._multiplexedRequestManager = MultiplexedRequestManager(cdnMaxRequestsPerWorker: 4, cdnMaxWorkersPerTarget: 8, takeWorker: { [weak self] target, tag, continueInBackground in
             if let strongSelf = self {
                 let datacenterId: Int
                 let isCdn: Bool

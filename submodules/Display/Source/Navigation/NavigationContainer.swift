@@ -194,18 +194,32 @@ public final class NavigationContainer: ASDisplayNode, ASGestureRecognizerDelega
     public override func didLoad() {
         super.didLoad()
         
-        let panRecognizer = InteractiveTransitionGestureRecognizer(target: self, action: #selector(self.panGesture(_:)), allowedDirections: { [weak self] _ in
+        let panRecognizer = InteractiveTransitionGestureRecognizer(target: self, action: #selector(self.panGesture(_:)), allowedDirections: { [weak self] point in
             guard let strongSelf = self, strongSelf.controllers.count > 1 else {
+                return []
+            }
+            // AYG: the stock closure ignored the start point and returned
+            // .right for the whole screen. Honour the screen's own edge-width
+            // configuration (ChatController asks for 35% of the width), with
+            // a compact-screen default of the left 35% capped at 200pt.
+            // Returning [] makes touchesBegan fail the gesture cleanly.
+            let width = max(1.0, strongSelf.view.bounds.width)
+            let allowedWidth: CGFloat
+            if let configuration = strongSelf.controllers.last?.interactiveNavivationGestureEdgeWidth {
+                switch configuration {
+                case let .constant(value):
+                    allowedWidth = value
+                case let .widthMultiplier(factor, minValue, maxValue):
+                    allowedWidth = max(minValue, min(width * factor, maxValue))
+                }
+            } else {
+                allowedWidth = min(width * 0.35, 200.0)
+            }
+            guard point.x <= allowedWidth else {
                 return []
             }
             return .right
         })
-        /*panRecognizer.dynamicEdgeWidth = { [weak self] _ in
-            guard let self, let controller = self.controllers.last, let value = controller.interactiveNavivationGestureEdgeWidth else {
-                return .constant(16.0)
-            }
-            return value
-        }*/
         if #available(iOS 13.4, *) {
             panRecognizer.allowedScrollTypesMask = .continuous
         }

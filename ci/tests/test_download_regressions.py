@@ -128,7 +128,8 @@ class DownloadRegressionTests(unittest.TestCase):
     def test_speed_setting_is_a_ceiling_on_the_rust_engine(self):
         self.assertIn('min(fastDownloadMasterPendingParts, pendingParts)', self.fetch_v2())
         settings = self.text('Swiftgram/SGSimpleSettings/Sources/SimpleSettings.swift')
-        self.assertIn('return min(`default` + 2, 8)', settings)
+        self.assertIn('return min(`default` + 2, 10)', settings)
+        self.assertIn('return min(`default` + 6, 14)', settings)
         self.assertIn('return min(`default`, 4)', settings)
 
     def test_maximum_tier_part_size_is_bounded(self):
