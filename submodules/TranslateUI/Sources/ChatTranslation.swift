@@ -329,6 +329,11 @@ public func translateMessageIds(context: AccountContext, messageIds: [EngineMess
             return .complete()
         }
         let resetTranslationSwitch = {
+            // AYG: a failed single-message "quick translate" must not switch off
+            // translation for the whole chat.
+            guard !forQuickTranslate else {
+                return
+            }
             if let peerId = messageIds.first?.peerId {
                 let _ = updateChatTranslationStateInteractively(engine: context.engine, peerId: peerId, threadId: nil, { current in
                     return current?.withIsEnabled(false)

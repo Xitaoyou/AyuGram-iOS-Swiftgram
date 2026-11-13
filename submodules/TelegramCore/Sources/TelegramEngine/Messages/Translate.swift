@@ -506,6 +506,22 @@ func _internal_translateMessagesViaText(account: Account, messagesDict: [EngineM
         if backend == .gtranslate {
             primary = gtranslate(text, toLang)
             |> mapError { _ -> TranslationError in return .generic }
+        } else if backend == .system, let localService = engineExperimentalInternalTranslationService {
+            // AYG: Swiftgram upstream routes .system to the on-device Translation
+            // framework, falling back to Google only when it fails. Without this
+            // branch the system/Google setting appeared to do nothing.
+            primary = localService.translate(texts: [AnyHashable(0): text], fromLang: fromLang ?? "", toLang: toLang)
+            |> castError(TranslationError.self)
+            |> mapToSignal { resultTexts -> Signal<String, TranslationError> in
+                if let translated = resultTexts?[AnyHashable(0)], !translated.isEmpty {
+                    return .single(translated)
+                }
+                return .fail(.generic)
+            }
+            |> `catch` { _ -> Signal<String, TranslationError> in
+                return gtranslate(text, toLang)
+                |> mapError { _ -> TranslationError in return .generic }
+            }
         } else {
             primary = _internal_translate(network: account.network, text: text, toLang: toLang)
             |> mapToSignal { result -> Signal<String, TranslationError> in
@@ -520,16 +536,18 @@ func _internal_translateMessagesViaText(account: Account, messagesDict: [EngineM
             }
         }
 
-        let one: Signal<Void, NoError> = primary
+        let resolved: Signal<String, NoError> = primary
+        |> map { translated in
+            let _ = successCount.modify { $0 + 1 }
+            return translated
+        }
         |> `catch` { _ -> Signal<String, NoError> in
             // Falling back to the original text still clears the shimmer: an
             // untranslated bubble is better than one that spins forever.
             return .single(text)
         }
+        let one: Signal<Void, NoError> = resolved
         |> mapToSignal { translatedText -> Signal<Void, NoError> in
-            if translatedText != text {
-                let _ = successCount.modify { $0 + 1 }
-            }
             let updatedAttribute = TranslationMessageAttribute(text: translatedText, entities: generateEntitiesFunction(translatedText), toLang: toLang)
             return account.postbox.transaction { transaction in
                 transaction.updateMessage(messageId, update: { currentMessage in

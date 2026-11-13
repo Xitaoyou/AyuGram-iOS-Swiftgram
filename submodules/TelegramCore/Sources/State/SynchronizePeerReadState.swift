@@ -180,7 +180,12 @@ private func confirmSynchronized(postbox: Postbox, peerId: PeerId) -> Signal<Voi
 /// something unread (a server with nothing unread has caught up whatever its mark). Both the replay of
 /// `.ResetReadState` and validation decide by this.
 func localReadMarkIsAheadOfServer(localMaxIncomingReadId: MessageId.Id, serverMaxIncomingReadId: MessageId.Id, serverCount: Int32, serverMarkedUnread: Bool) -> Bool {
-    return (serverCount != 0 || serverMarkedUnread) && localMaxIncomingReadId > serverMaxIncomingReadId
+    // AYG: Ghost Mode deliberately keeps the server behind, so it can report
+    // count == 0 while the local mark is ahead. The stock guard read that as
+    // "the server caught up" and let the 0 overwrite the accumulated badge.
+    let serverHasUnread = serverCount != 0 || serverMarkedUnread
+    let ghostModeKeepsServerBehind = AyuGramSettings.shared.snapshot.suppressRead
+    return (serverHasUnread || ghostModeKeepsServerBehind) && localMaxIncomingReadId > serverMaxIncomingReadId
 }
 
 private func validatePeerReadState(network: Network, postbox: Postbox, stateManager: AccountStateManager, peerId: PeerId) -> Signal<Never, PeerReadStateValidationError> {
@@ -206,11 +211,13 @@ private func validatePeerReadState(network: Network, postbox: Postbox, stateMana
             |> ignoreValues
         }
         return stateManager.addCustomOperation(postbox.transaction { transaction -> PeerReadStateValidationError? in
+            var localUnreadCount: Int32 = 0
             if let currentReadState = transaction.getCombinedPeerReadState(peerId) {
                 loop: for (namespace, currentState) in currentReadState.states {
                     if namespace == Namespaces.Message.Cloud {
                         switch currentState {
                         case let .idBased(localMaxIncomingReadId, localMaxOutgoingReadId, localMaxKnownId, localCount, localMarkedUnread):
+                            localUnreadCount = localCount
                             if case let .idBased(updatedMaxIncomingReadId, _, _, updatedCount, updatedMarkedUnread) = readState {
                                 if localReadMarkIsAheadOfServer(localMaxIncomingReadId: localMaxIncomingReadId, serverMaxIncomingReadId: updatedMaxIncomingReadId, serverCount: updatedCount, serverMarkedUnread: updatedMarkedUnread) {
                                     // AyuGram: reads made while receipts are hidden stay local, so
@@ -247,6 +254,11 @@ private func validatePeerReadState(network: Network, postbox: Postbox, stateMana
                         break
                     }
                 }
+            }
+            // AYG: final guard — a server snapshot must never shrink the badge,
+            // regardless of which branch above decided to apply it.
+            if case let .idBased(maxIncoming, maxOutgoing, maxKnown, count, markedUnread) = updatedReadState, count < localUnreadCount {
+                updatedReadState = .idBased(maxIncomingReadId: maxIncoming, maxOutgoingReadId: maxOutgoing, maxKnownId: maxKnown, count: localUnreadCount, markedUnread: markedUnread)
             }
             transaction.resetIncomingReadStates([peerId: [Namespaces.Message.Cloud: updatedReadState]])
             return nil

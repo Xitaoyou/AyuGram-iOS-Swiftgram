@@ -33,11 +33,13 @@ extension ReplayContext {
         }
 
         var ignore = false
+        var localUnreadCount: Int32 = 0
         if let currentReadState = transaction.getCombinedPeerReadState(peerId) {
             loop: for (currentNamespace, currentState) in currentReadState.states {
                 if namespace == currentNamespace {
                     switch currentState {
                     case let .idBased(localMaxIncomingReadId, _, _, localCount, localMarkedUnread):
+                        localUnreadCount = localCount
                         if localReadMarkIsAheadOfServer(localMaxIncomingReadId: localMaxIncomingReadId, serverMaxIncomingReadId: maxIncomingReadId, serverCount: count, serverMarkedUnread: markedUnreadValue) {
                             transaction.setNeedsIncomingReadStateSynchronization(peerId)
 
@@ -54,7 +56,9 @@ extension ReplayContext {
             }
         }
         if !ignore {
-            transaction.resetIncomingReadStates([peerId: [namespace: .idBased(maxIncomingReadId: maxIncomingReadId, maxOutgoingReadId: maxOutgoingReadId, maxKnownId: maxKnownId, count: count, markedUnread: markedUnreadValue)]])
+            // AYG: never let a server snapshot shrink the accumulated badge,
+            // even when the locally-ahead guard above did not fire.
+            transaction.resetIncomingReadStates([peerId: [namespace: .idBased(maxIncomingReadId: maxIncomingReadId, maxOutgoingReadId: maxOutgoingReadId, maxKnownId: maxKnownId, count: max(localUnreadCount, count), markedUnread: markedUnreadValue)]])
         }
     }
     

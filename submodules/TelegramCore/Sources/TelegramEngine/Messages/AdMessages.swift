@@ -490,6 +490,14 @@ private class AdMessagesHistoryContextImpl {
         // activated, so getSponsoredMessages is sent anyway. Stop it here.
         if AyuGramSettings.shared.extra.disableAds {
             self.stateValue = State(interPostInterval: nil, messages: [])
+            // AYG: purge sponsored posts cached before the toggle was enabled
+            // (or by an older build), otherwise they can still surface in the
+            // Gallery even though no new request is made.
+            let account = self.account
+            let peerId = self.peerId
+            let _ = account.postbox.transaction { transaction in
+                CachedState.setCached(transaction: transaction, peerId: peerId, state: nil)
+            }.startStandalone()
             return
         }
 
