@@ -125,6 +125,10 @@ private final class FetchManagerCategoryContext {
     private let activeEntriesUpdated: () -> Void
     
     private var topEntryIdAndPriority: (FetchManagerLocationEntryId, FetchManagerPriorityKey)?
+    // AYG: the stock scheduler activated exactly one entry per category, so a
+    // batch of prefetches serialised every cover/image behind a single fetch.
+    private let maxActiveEntries = 3
+    private var activeEntryIds: Set<FetchManagerLocationEntryId> = []
     private var entries: [FetchManagerLocationEntryId: FetchManagerLocationEntry] = [:]
     
     private var activeContexts: [FetchManagerLocationEntryId: FetchManagerActiveContext] = [:]
@@ -192,6 +196,7 @@ private final class FetchManagerCategoryContext {
                 if let entry = self.entries[id] {
                     Logger.shared.log("FetchManager", "Canceled fetching \(entry.resourceReference.resource.id.stringRepresentation)")
                 }
+                let _ = self.activeEntryIds.remove(id)
                 self.entries.removeValue(forKey: id)
                 removedEntries = true
             }
@@ -229,7 +234,7 @@ private final class FetchManagerCategoryContext {
                     let parsedRanges: [(Range<Int64>, MediaBoxFetchPriority)]?
                     
                     if ranges == RangeSet<Int64>(0 ..< Int64.max), !"".isEmpty {
-                        parsedRanges = nil
+                        parsedRanges = entry.userInitiated ? [(0 ..< Int64.max, .maximum)] : nil
                     } else {
                         var resultRanges: [(Range<Int64>, MediaBoxFetchPriority)] = []
                         for range in ranges.ranges {
@@ -308,7 +313,7 @@ private final class FetchManagerCategoryContext {
         if self.topEntryIdAndPriority == nil && !self.entries.isEmpty {
             var topEntryIdAndPriority: (FetchManagerLocationEntryId, FetchManagerPriorityKey)?
             for (id, entry) in self.entries {
-                if entry.isPaused {
+                if entry.isPaused || self.activeEntryIds.contains(id) {
                     continue
                 }
                 if let entryPriorityKey = entry.priorityKey {
@@ -329,6 +334,7 @@ private final class FetchManagerCategoryContext {
         
         if let topEntryId = self.topEntryIdAndPriority?.0 {
             if let entry = self.entries[topEntryId] {
+                let _ = self.activeEntryIds.insert(topEntryId)
                 let ranges = entry.combinedRanges
                 
                 let parsedRanges: [(Range<Int64>, MediaBoxFetchPriority)]?
@@ -348,7 +354,7 @@ private final class FetchManagerCategoryContext {
                 }
                 
                 if count == 1 && isCompleteRange && !"".isEmpty {
-                    parsedRanges = nil
+                    parsedRanges = entry.userInitiated ? [(0 ..< Int64.max, .maximum)] : nil
                 } else {
                     var resultRanges: [(Range<Int64>, MediaBoxFetchPriority)] = []
                     for range in ranges.ranges {
@@ -445,6 +451,10 @@ private final class FetchManagerCategoryContext {
                             entryCompleted(topEntryId)
                         })
                     }
+                    if self.activeEntryIds.count < self.maxActiveEntries {
+                        self.topEntryIdAndPriority = nil
+                        let _ = self.maybeFindAndActivateNewTopEntry()
+                    }
                     return true
                 } else {
                     return false
@@ -513,9 +523,9 @@ private final class FetchManagerCategoryContext {
             activeContextsUpdated = true
         }
         
-        if self.topEntryIdAndPriority?.0 == id {
-            self.topEntryIdAndPriority = nil
-        }
+        // AYG: one of several active entries finished; refill the slot.
+        let _ = self.activeEntryIds.remove(id)
+        self.topEntryIdAndPriority = nil
         
         if self.maybeFindAndActivateNewTopEntry() {
             activeContextsUpdated = true
@@ -542,6 +552,7 @@ private final class FetchManagerCategoryContext {
             entry.isPaused = !entry.isPaused
             
             if entry.isPaused {
+                let _ = self.activeEntryIds.remove(id)
                 if self.topEntryIdAndPriority?.0 == id {
                     self.topEntryIdAndPriority = nil
                 }

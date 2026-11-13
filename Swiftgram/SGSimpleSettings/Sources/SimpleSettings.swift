@@ -642,14 +642,18 @@ public func getSGDownloadPartSize(_ default: Int64, fileSize: Int64?) -> Int64 {
 }
 
 public func getSGMaxPendingParts(_ default: Int) -> Int {
+    // AYG: these are ceilings, not accelerators. Telegram throttles
+    // non-Premium accounts with FLOOD_PREMIUM_WAIT_* when too many
+    // upload.getFile parts are in flight; raising concurrency made batches
+    // slower. Keep every tier below the server's throttling threshold.
     let currentDownloadSetting = SGSimpleSettings.shared.downloadSpeedBoost
     switch (currentDownloadSetting) {
         case SGSimpleSettings.DownloadSpeedBoostValues.medium.rawValue:
-            return 8
+            return min(`default`, 6)
         case SGSimpleSettings.DownloadSpeedBoostValues.maximum.rawValue:
-            return 12
+            return min(`default` + 2, 8)
         default:
-            return `default`
+            return min(`default`, 4)
     }
 }
 

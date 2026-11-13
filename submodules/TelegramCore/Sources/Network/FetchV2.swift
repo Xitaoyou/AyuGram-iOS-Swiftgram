@@ -510,8 +510,12 @@ private final class FetchImpl {
                 self.defaultPartSize = getSGDownloadPartSize(128 * 1024, fileSize: self.size)
             }
             self.cdnPartSize = 128 * 1024
-            self.masterPendingParts = self.fastDownloads ? fastDownloadMasterPendingParts : getSGMaxPendingParts(6)
-            self.cdnPendingParts = self.fastDownloads ? fastDownloadCdnPendingParts : getSGMaxPendingParts(6)
+            // AYG: the stock code bypassed getSGMaxPendingParts on the rust
+            // engine, so the setting only enlarged partSize (more aggressive)
+            // and never applied a working concurrency ceiling.
+            let pendingParts = getSGMaxPendingParts(6)
+            self.masterPendingParts = self.fastDownloads ? min(fastDownloadMasterPendingParts, pendingParts) : pendingParts
+            self.cdnPendingParts = self.fastDownloads ? min(fastDownloadCdnPendingParts, pendingParts * 2) : pendingParts
             
             // The resource id tells concurrent downloads apart; an Api value prints only its constructor name.
             self.loggingIdentifier = resource.id.stringRepresentation
@@ -1386,16 +1390,17 @@ private final class FetchImpl {
         }
         
         private func processFloodWaitError(error: String) {
-            var networkSpeedLimitSubject: NetworkSpeedLimitedEvent.DownloadSubject?
-            if let location = self.parameters?.location {
-                if let messageId = location.messageId {
-                    networkSpeedLimitSubject = .message(messageId)
-                }
+            // AYG: FLOOD_PREMIUM_WAIT_* is a server-side, account-tier throttle.
+            // The stock handler only turned it into a "Subscribe to Premium" toast
+            // while MtProtoKit's flood-wait retry kept holding a worker slot, so
+            // one throttled part stalled every other queued part. Halve the part
+            // window instead; fewer in-flight requests stops the throttling.
+            guard error.hasPrefix("FLOOD_PREMIUM_WAIT") else {
+                return
             }
-            if let subject = networkSpeedLimitSubject {
-                if error.hasPrefix("FLOOD_PREMIUM_WAIT") {
-                    self.network.addNetworkSpeedLimitedEvent(event: .download(subject))
-                }
+            if case let .fetching(state) = self.state {
+                state.window = max(fastDownloadMinWindow, state.window / 2)
+                state.lastWindowDecrease = CFAbsoluteTimeGetCurrent()
             }
         }
     }

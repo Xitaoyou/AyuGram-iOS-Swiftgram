@@ -974,6 +974,7 @@ final class UniversalVideoGalleryItemNode: ZoomableContentGalleryItemNode {
     private let mediaPlaybackStateDisposable = MetaDisposable()
     
     private let fetchDisposable = MetaDisposable()
+    private let fetchPriorityDisposable = MetaDisposable()
     private var fetchStatus: MediaResourceStatus?
     private var fetchControls: FetchControls?
     
@@ -1201,6 +1202,7 @@ final class UniversalVideoGalleryItemNode: ZoomableContentGalleryItemNode {
     }
     
     deinit {
+        self.fetchPriorityDisposable.dispose()
         self.statusDisposable.dispose()
         self.moreButtonStateDisposable.dispose()
         self.mediaPlaybackStateDisposable.dispose()
@@ -1672,9 +1674,13 @@ final class UniversalVideoGalleryItemNode: ZoomableContentGalleryItemNode {
                     mediaFileStatus = status |> map(Optional.init)
                     self.fetchControls = FetchControls(fetch: { [weak self] in
                         if let strongSelf = self {
+                            // AYG: the opened video's parts must not sit behind
+                            // dozens of prefetch parts from a fast scroll.
+                            strongSelf.fetchPriorityDisposable.set(item.context.engine.resources.pushPriorityDownload(resourceId: file.resource.id.stringRepresentation, priority: 2))
                             strongSelf.fetchDisposable.set(messageMediaFileInteractiveFetched(context: item.context, message: message, file: file, userInitiated: true).start())
                         }
-                    }, cancel: {
+                    }, cancel: { [weak self] in
+                        self?.fetchPriorityDisposable.dispose()
                         messageMediaFileCancelInteractiveFetch(context: item.context, messageId: message.id, file: file)
                     })
                 }
