@@ -975,6 +975,7 @@ final class UniversalVideoGalleryItemNode: ZoomableContentGalleryItemNode {
     
     private let fetchDisposable = MetaDisposable()
     private let fetchPriorityDisposable = MetaDisposable()
+    private let frameHeadDisposable = MetaDisposable()
     private var fetchStatus: MediaResourceStatus?
     private var fetchControls: FetchControls?
     
@@ -1203,6 +1204,7 @@ final class UniversalVideoGalleryItemNode: ZoomableContentGalleryItemNode {
     
     deinit {
         self.fetchPriorityDisposable.dispose()
+        self.frameHeadDisposable.dispose()
         self.statusDisposable.dispose()
         self.moreButtonStateDisposable.dispose()
         self.mediaPlaybackStateDisposable.dispose()
@@ -2253,6 +2255,10 @@ final class UniversalVideoGalleryItemNode: ZoomableContentGalleryItemNode {
         if self.isCentral != isCentral {
             self.isCentral = isCentral
             
+            if !isCentral {
+                self.frameHeadDisposable.dispose()
+            }
+
             if let videoNode = self.videoNode {
                 if isCentral {
                     // AYG: autoplay never calls fetchControls.fetch(), so the
@@ -2261,6 +2267,29 @@ final class UniversalVideoGalleryItemNode: ZoomableContentGalleryItemNode {
                     // item becomes central instead.
                     if let item = self.item, let content = item.content as? NativeVideoContent {
                         self.fetchPriorityDisposable.set(self.context.engine.resources.pushPriorityDownload(resourceId: content.fileReference.media.resource.id.stringRepresentation, priority: 2))
+                        // AYG: CachedVideoFirstFrameRepresentation never fetches
+                        // anything itself. It only reads the partial file, so the
+                        // blurred cover survived until another download happened
+                        // to write enough bytes. Pull just the head of the file in
+                        // the maximum lane; the player's full-range request and
+                        // this head request share one MediaBoxFileContext, and
+                        // FetchV2 serves the higher lane first.
+                        let file = content.fileReference.media
+                        let headLength: Int64
+                        if let size = file.size {
+                            headLength = min(Int64(size), 2 * 1024 * 1024)
+                        } else {
+                            headLength = 2 * 1024 * 1024
+                        }
+                        if headLength > 0 {
+                            self.frameHeadDisposable.set(self.context.engine.resources.fetch(
+                                reference: content.fileReference.resourceReference(file.resource),
+                                userLocation: content.userLocation,
+                                userContentType: MediaResourceUserContentType(file: file),
+                                ranges: [(0 ..< headLength, .maximum)],
+                                statsCategory: .video
+                            ).start())
+                        }
                     }
                     var isAnimated = false
                     if let item = self.item, let content = item.content as? NativeVideoContent {

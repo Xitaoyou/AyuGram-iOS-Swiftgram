@@ -60,7 +60,12 @@ private final class FetchManagerLocationEntry {
     
     var priorityKey: FetchManagerPriorityKey? {
         if !self.references.isEmpty || self.userInitiated {
-            return FetchManagerPriorityKey(locationKey: self.id.locationKey, hasElevatedPriority: self.elevatedPriorityReferenceCount > 0, userInitiatedPriority: userInitiatedPriorityIndices.last, topReference: self.references.copyItems().max())
+            // AYG: FetchManagerPriority orders .userInitiated < .foregroundPrefetch
+            // < .backgroundPrefetch and the scheduler picks the smallest key, so
+            // the most urgent reference must decide. max() picked the *least*
+            // urgent one, dragging a just-tapped image behind its own prefetch
+            // reference and behind the background queue.
+            return FetchManagerPriorityKey(locationKey: self.id.locationKey, hasElevatedPriority: self.elevatedPriorityReferenceCount > 0, userInitiatedPriority: userInitiatedPriorityIndices.last, topReference: self.references.copyItems().min())
         } else {
             return nil
         }
@@ -243,7 +248,7 @@ private final class FetchManagerCategoryContext {
                     } else {
                         var resultRanges: [(Range<Int64>, MediaBoxFetchPriority)] = []
                         for range in ranges.ranges {
-                            resultRanges.append((range, entry.elevatedPriorityReferenceCount > 0 ? .elevated : .default))
+                            resultRanges.append((range, entry.userInitiated ? .maximum : (entry.elevatedPriorityReferenceCount > 0 ? .elevated : .default)))
                         }
                         parsedRanges = resultRanges
                     }
@@ -369,7 +374,7 @@ private final class FetchManagerCategoryContext {
                 } else {
                     var resultRanges: [(Range<Int64>, MediaBoxFetchPriority)] = []
                     for range in ranges.ranges {
-                        resultRanges.append((range, entry.elevatedPriorityReferenceCount > 0 ? .elevated : .default))
+                        resultRanges.append((range, entry.userInitiated ? .maximum : (entry.elevatedPriorityReferenceCount > 0 ? .elevated : .default)))
                     }
                     parsedRanges = resultRanges
                 }

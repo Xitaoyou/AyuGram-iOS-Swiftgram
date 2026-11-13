@@ -167,6 +167,14 @@ private final class PrefetchManagerInnerImpl {
                     }
                     
                     validIds.insert(id)
+                    // AYG: orderedPreloadMedia used to be enqueued without any
+                    // bound, saturating the .image category's active slots.
+                    // Cap it like the in-chat prefetch; user-opened media now
+                    // wins on the .maximum MediaBox lane instead of by starving
+                    // the queue.
+                    if self.contexts[id] == nil && self.contexts.count >= 4 {
+                        continue
+                    }
                     let context: PrefetchMediaContext
                     if let current = self.contexts[id] {
                         context = current

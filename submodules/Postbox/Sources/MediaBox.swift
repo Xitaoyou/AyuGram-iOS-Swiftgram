@@ -852,7 +852,7 @@ public final class MediaBox {
         }
     }
     
-    public func fetchedResource(_ resource: MediaResource, parameters: MediaResourceFetchParameters?, implNext: Bool = false) -> Signal<FetchResourceSourceType, FetchResourceError> {
+    public func fetchedResource(_ resource: MediaResource, parameters: MediaResourceFetchParameters?, priority: MediaBoxFetchPriority = .default, implNext: Bool = false) -> Signal<FetchResourceSourceType, FetchResourceError> {
         return Signal { subscriber in
             let disposable = MetaDisposable()
             
@@ -886,7 +886,7 @@ public final class MediaBox {
                             |> mapToSignal { fetch in
                                 return fetch(resource, ranges, parameters)
                             }
-                        }, error: { _ in
+                        }, priority: priority, error: { _ in
                             subscriber.putError(.generic)
                         }, completed: {
                             if implNext {

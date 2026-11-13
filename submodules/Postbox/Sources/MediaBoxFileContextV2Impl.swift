@@ -845,6 +845,7 @@ public final class MediaBoxFileContextV2Impl: MediaBoxFileContext {
     
     public func fetchedFullRange(
         fetch: @escaping (Signal<[(Range<Int64>, MediaBoxFetchPriority)], NoError>) -> Signal<MediaResourceDataFetchResult, MediaResourceDataFetchError>,
+        priority: MediaBoxFetchPriority = .default,
         error: @escaping (MediaResourceDataFetchError) -> Void,
         completed: @escaping () -> Void
     ) -> Disposable {
@@ -858,7 +859,10 @@ public final class MediaBoxFileContextV2Impl: MediaBoxFileContext {
                 return partialState.request(
                     range: 0 ..< Int64.max,
                     isFullRange: true,
-                    priority: .default,
+                    // AYG: the full-range fetch used to be pinned to .default,
+                    // so every user-opened photo/video shared a lane with the
+                    // prefetch queue. Forward the caller's priority instead.
+                    priority: priority,
                     fetch: fetch,
                     error: error,
                     completed: completed

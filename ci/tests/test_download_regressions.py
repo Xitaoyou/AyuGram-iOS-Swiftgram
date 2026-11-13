@@ -151,7 +151,7 @@ class DownloadRegressionTests(unittest.TestCase):
 
     def test_prefetch_leaves_queue_headroom(self):
         prefetch = self.text('submodules/TelegramUI/Sources/InChatPrefetchManager.swift')
-        self.assertIn('self.contexts.count >= 2', prefetch)
+        self.assertIn('self.contexts.count >= 4', prefetch)
 
     def test_category_scheduler_is_not_single_active(self):
         source = self.fetch_manager()

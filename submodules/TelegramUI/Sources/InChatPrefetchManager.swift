@@ -106,10 +106,12 @@ final class InChatPrefetchManager {
             }
             
             validIds.insert(id)
-            // AYG: leave headroom in the download queue for the media the user
-            // actually opens. A fast scroll previously enqueued every visible
-            // file at once, starving the file that was just tapped.
-            if self.contexts[id] == nil && self.contexts.count >= 2 {
+            // AYG: bound the in-chat prefetch so a fast scroll cannot enqueue
+            // every visible file at once. This used to be 2, which starved the
+            // batch itself; now that user-opened media owns the .maximum
+            // MediaBox lane (see FetchedMediaResource.swift), prefetches no
+            // longer block it, so a wider window is safe.
+            if self.contexts[id] == nil && self.contexts.count >= 4 {
                 continue
             }
             let context: PrefetchMediaContext

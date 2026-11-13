@@ -522,7 +522,11 @@ final class ChatImageGalleryItemNode: ZoomableContentGalleryItemNode {
                 
                 self.zoomableContent = (largestSize.dimensions.cgSize, self.imageNode)
                 
-                self.fetchDisposable.set(self.context.engine.resources.fetch(reference: imageReference.resourceReference(largestSize.resource), userLocation: userLocation, userContentType: .image).start())
+                // AYG: the no-range fetch bypassed FetchManager entirely and
+                // ended up in the .default lane behind every queued prefetch.
+                // Request the same full range explicitly in the maximum lane
+                // so the bytes the display signal is waiting for arrive first.
+                self.fetchDisposable.set(self.context.engine.resources.fetch(reference: imageReference.resourceReference(largestSize.resource), userLocation: userLocation, userContentType: .image, ranges: [(0 ..< Int64.max, .maximum)]).start())
                 self.setupStatus(resource: largestSize.resource)
             } else {
                 self._ready.set(.single(Void()))

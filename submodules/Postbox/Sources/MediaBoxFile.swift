@@ -433,14 +433,14 @@ final class MediaBoxPartialFile {
         }
     }
     
-    func fetchedFullRange(fetch: @escaping (Signal<[(Range<Int64>, MediaBoxFetchPriority)], NoError>) -> Signal<MediaResourceDataFetchResult, MediaResourceDataFetchError>, error: @escaping (MediaResourceDataFetchError) -> Void, completed: @escaping () -> Void) -> Disposable {
+    func fetchedFullRange(fetch: @escaping (Signal<[(Range<Int64>, MediaBoxFetchPriority)], NoError>) -> Signal<MediaResourceDataFetchResult, MediaResourceDataFetchError>, priority: MediaBoxFetchPriority = .default, error: @escaping (MediaResourceDataFetchError) -> Void, completed: @escaping () -> Void) -> Disposable {
         let queue = self.queue
         let disposable = MetaDisposable()
         
         let index = self.fullRangeRequests.add(disposable)
         self.updateStatuses()
         
-        disposable.set(self.fetched(range: 0 ..< Int64.max, priority: .default, fetch: fetch, error: { e in
+        disposable.set(self.fetched(range: 0 ..< Int64.max, priority: priority, fetch: fetch, error: { e in
             error(e)
         }, completed: { [weak self] in
             queue.async {

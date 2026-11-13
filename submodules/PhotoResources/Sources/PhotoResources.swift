@@ -88,6 +88,26 @@ func chatMessagePhotoDatas(mediaBox: MediaBox, userLocation: MediaResourceUserLo
         if sources.isEmpty {
             sources.append(.image(size: Int64(largestByteSize)))
         }
+        // AYG: progressiveRangeMap appends [2, 3, 4] on top of the earlier
+        // [3] and [4] tiers, so a single photo opened five subscriptions to
+        // the very same resource (three of them exact duplicates). Keeping the
+        // LAST occurrence of each size both de-duplicates and leaves the
+        // tiers ascending with the largest one last, which the display loop
+        // below relies on.
+        var lastIndexBySize: [Int64: Int] = [:]
+        for (index, source) in sources.enumerated() {
+            if case let .image(size) = source {
+                lastIndexBySize[size] = index
+            }
+        }
+        sources = sources.enumerated().filter { entry in
+            switch entry.element {
+            case let .image(size):
+                return lastIndexBySize[size] == entry.offset
+            case .miniThumbnail(_):
+                return true
+            }
+        }.map { $0.element }
         if let miniThumbnail = photoReference.media.immediateThumbnailData.flatMap(decodeTinyThumbnail) {
             sources.insert(.miniThumbnail(data: miniThumbnail), at: 0)
         }
@@ -105,20 +125,28 @@ func chatMessagePhotoDatas(mediaBox: MediaBox, userLocation: MediaResourceUserLo
                 }
             }
             
+            // AYG: the old loop skipped the two smallest tiers for any display
+            // wider than 100pt and completed as soon as the largest tier had
+            // data. Nothing was drawn until the largest tier was fully written,
+            // and once it was, later bytes never refreshed the image. Show the
+            // first tier that has data, keep refreshing as more bytes arrive,
+            // and only complete once the whole file is present.
+            // combineLatest can call next from several input queues, so the
+            // de-duplication state has to be atomic rather than a captured var.
+            let lastEmittedByteCount = Atomic<Int?>(value: nil)
             let dataDisposable = combineLatest(signals).start(next: { results in
                 var foundData = false
                 loop: for i in (0 ..< results.count).reversed() {
-                    let isLastSize = i == results.count - 1
                     switch results[i].0 {
                     case .image:
                         if let data = results[i].1, data.count != 0 {
-                            if Int(fullRepresentationSize.width) > 100 && i <= 1 && !isLastSize {
-                                continue
-                            }
-                            
-                            subscriber.putNext(Tuple4(nil, data, .full, isLastSize))
                             foundData = true
-                            if isLastSize {
+                            if lastEmittedByteCount.swap(data.count) == data.count {
+                                break loop
+                            }
+                            let isComplete = data.count >= Int(progressiveRepresentation.progressiveSizes.last!)
+                            subscriber.putNext(Tuple4(nil, data, .full, isComplete))
+                            if isComplete {
                                 subscriber.putCompletion()
                             }
                             break loop

@@ -96,8 +96,14 @@ public func fetchedMediaResource(
     let location = MediaResourceStorageLocation(userLocation: userLocation, reference: reference)
     
     var ranges = ranges
-    
+    // AYG: a lone full-range request used to be collapsed to nil and its
+    // priority discarded. Every user-opened `.maximum` download therefore
+    // landed in fetchedFullRange's hardcoded .default lane together with the
+    // whole prefetch queue. Keep using the full-range path, but carry the
+    // requested lane through to the MediaBox so FetchV2 can order the parts.
+    var fullRangePriority: MediaBoxFetchPriority = .default
     if let rangesValue = ranges, rangesValue.count == 1, rangesValue[0].0 == 0 ..< Int64.max {
+        fullRangePriority = rangesValue[0].1
         ranges = nil
     }
     
@@ -122,7 +128,7 @@ public func fetchedMediaResource(
             location: location,
             contentType: userContentType,
             isRandomAccessAllowed: isRandomAccessAllowed
-        ), implNext: reportResultStatus)
+        ), priority: fullRangePriority, implNext: reportResultStatus)
     }
 }
 
