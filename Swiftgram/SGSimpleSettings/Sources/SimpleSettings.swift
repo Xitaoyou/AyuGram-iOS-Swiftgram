@@ -258,7 +258,7 @@ public class SGSimpleSettings {
         Keys.startTelescopeWithRearCam.rawValue: false,
         Keys.accountColorsSaturation.rawValue: 100,
         Keys.uploadSpeedBoost.rawValue: false,
-        Keys.downloadSpeedBoost.rawValue: DownloadSpeedBoostValues.none.rawValue,
+        Keys.downloadSpeedBoost.rawValue: DownloadSpeedBoostValues.medium.rawValue,
         Keys.rememberLastFolder.rawValue: false,
         Keys.bottomTabStyle.rawValue: BottomTabStyleValues.telegram.rawValue,
         Keys.lastAccountFolders.rawValue: [:],

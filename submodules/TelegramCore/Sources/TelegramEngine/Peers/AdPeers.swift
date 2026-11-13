@@ -1,6 +1,7 @@
 import Foundation
 import Postbox
 import SwiftSignalKit
+import SGSimpleSettings
 internal import TelegramApi
 
 public class AdPeer: Equatable {
@@ -39,6 +40,10 @@ public class AdPeer: Equatable {
 }
 
 func _internal_searchAdPeers(account: Account, query: String) -> Signal<[AdPeer], NoError> {
+    // AYG: Disable Ads also covers sponsored peers in global search.
+    if AyuGramSettings.shared.extra.disableAds {
+        return .single([])
+    }
     return account.network.request(Api.functions.contacts.getSponsoredPeers(q: query))
     |> map(Optional.init)
     |> `catch` { _ in

@@ -1403,7 +1403,7 @@ public final class ChatMessageInteractiveMediaNode: ASDisplayNode, GalleryItemTr
                                     updatedFetchControls = FetchControls(fetch: { manual in
                                         if let strongSelf = self {
                                             if let representation = largestRepresentationForPhoto(image) {
-                                                strongSelf.fetchDisposable.set(messageMediaImageInteractiveFetched(context: context, message: message, image: image, resource: representation.resource, range: representationFetchRangeForDisplayAtSize(representation: representation, dimension: nil/*isSecretMedia ? nil : 600*/), userInitiated: manual, storeToDownloadsPeerId: storeToDownloadsPeerId).startStrict())
+                                                strongSelf.fetchDisposable.set(messageMediaImageInteractiveFetched(context: context, message: message, image: image, resource: representation.resource, range: representationFetchRangeForDisplayAtSize(representation: representation, dimension: 600), userInitiated: manual, storeToDownloadsPeerId: storeToDownloadsPeerId).startStrict())
                                             }
                                         }
                                     }, cancel: {
@@ -1537,7 +1537,7 @@ public final class ChatMessageInteractiveMediaNode: ASDisplayNode, GalleryItemTr
                             updatedFetchControls = FetchControls(fetch: { manual in
                                 if let strongSelf = self {
                                     if let representation = largestRepresentationForPhoto(image) {
-                                        strongSelf.fetchDisposable.set(messageMediaImageInteractiveFetched(context: context, message: message, image: image, resource: representation.resource, range: representationFetchRangeForDisplayAtSize(representation: representation, dimension: nil/*isSecretMedia ? nil : 600*/), userInitiated: manual, storeToDownloadsPeerId: storeToDownloadsPeerId).startStrict())
+                                        strongSelf.fetchDisposable.set(messageMediaImageInteractiveFetched(context: context, message: message, image: image, resource: representation.resource, range: representationFetchRangeForDisplayAtSize(representation: representation, dimension: 600), userInitiated: manual, storeToDownloadsPeerId: storeToDownloadsPeerId).startStrict())
                                     }
                                 }
                             }, cancel: {
@@ -1744,7 +1744,7 @@ public final class ChatMessageInteractiveMediaNode: ASDisplayNode, GalleryItemTr
                                         disposableSet.add(messageMediaFileInteractiveFetched(context: context, message: message, file: file, userInitiated: manual, storeToDownloadsPeerId: storeToDownloadsPeerId).startStrict())
                                     }
                                     if let image = media as? TelegramMediaImage, let representation = largestRepresentationForPhoto(image) {
-                                        disposableSet.add(messageMediaImageInteractiveFetched(context: context, message: message, image: image, resource: representation.resource, range: representationFetchRangeForDisplayAtSize(representation: representation, dimension: nil/*isSecretMedia ? nil : 600*/), userInitiated: manual, storeToDownloadsPeerId: storeToDownloadsPeerId).startStrict())
+                                        disposableSet.add(messageMediaImageInteractiveFetched(context: context, message: message, image: image, resource: representation.resource, range: representationFetchRangeForDisplayAtSize(representation: representation, dimension: 600), userInitiated: manual, storeToDownloadsPeerId: storeToDownloadsPeerId).startStrict())
                                     }
                                     strongSelf.fetchDisposable.set(disposableSet)
                                 }
@@ -2576,7 +2576,7 @@ public final class ChatMessageInteractiveMediaNode: ASDisplayNode, GalleryItemTr
                                 }
                                 
                                 if let file = media as? TelegramMediaFile, let image = file.videoCover, let representation = largestRepresentationForPhoto(image) {
-                                    strongSelf.coverFetchDisposable.set(messageMediaImageInteractiveFetched(context: context, message: message, image: image, resource: representation.resource, range: representationFetchRangeForDisplayAtSize(representation: representation, dimension: nil), userInitiated: false, storeToDownloadsPeerId: nil).startStrict())
+                                    strongSelf.coverFetchDisposable.set(messageMediaImageInteractiveFetched(context: context, message: message, image: image, resource: representation.resource, range: representationFetchRangeForDisplayAtSize(representation: representation, dimension: 600), userInitiated: false, storeToDownloadsPeerId: nil).startStrict())
                                 }
                             } else if currentAutomaticDownload != automaticDownload, case .full = automaticDownload {
                                 strongSelf.fetchControls.with({ $0 })?.fetch(false)

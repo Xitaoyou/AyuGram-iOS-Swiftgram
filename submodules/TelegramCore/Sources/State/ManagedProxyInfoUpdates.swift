@@ -3,6 +3,7 @@ internal import TelegramApi
 import Postbox
 import SwiftSignalKit
 import MtProtoKit
+import SGSimpleSettings
 
 
 public final class PromoChatListItem: AdditionalChatListItem {
@@ -189,10 +190,18 @@ extension ServerSuggestionInfo.Item {
 }
 
 func _internal_fetchPromoInfo(accountPeerId: EnginePeer.Id, postbox: Postbox, network: Network) -> Signal<Void, NoError> {
-    return network.request(Api.functions.help.getPromoData())
-    |> `catch` { _ -> Signal<Api.help.PromoData, NoError> in
-        return .single(.promoDataEmpty(.init(expires: 10 * 60)))
+    let source: Signal<Api.help.PromoData, NoError>
+    if AyuGramSettings.shared.extra.disableAds {
+        // AYG: promo / proxy suggestions are ads in the chat list. Do not request
+        // them; feed the empty case so the existing cleanup still clears cached items.
+        source = .single(.promoDataEmpty(.init(expires: 10 * 60)))
+    } else {
+        source = network.request(Api.functions.help.getPromoData())
+        |> `catch` { _ -> Signal<Api.help.PromoData, NoError> in
+            return .single(.promoDataEmpty(.init(expires: 10 * 60)))
+        }
     }
+    return source
     |> mapToSignal { data -> Signal<Void, NoError> in
         return postbox.transaction { transaction -> Void in
             switch data {

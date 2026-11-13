@@ -1900,7 +1900,7 @@ final class UniversalVideoGalleryItemNode: ZoomableContentGalleryItemNode {
                 let imageNode = TransformImageNode()
                 imageNode.alpha = 1.0
                 imageNode.isUserInteractionEnabled = false
-                imageNode.setSignal(chatMessagePhoto(postbox: context.account.postbox, userLocation: content.userLocation, photoReference: imageReference, synchronousLoad: true, highQuality: true))
+                imageNode.setSignal(chatMessagePhoto(postbox: context.account.postbox, userLocation: content.userLocation, photoReference: imageReference, synchronousLoad: false, highQuality: false))
                 imageNode.frame = CGRect(origin: .zero, size: videoSize)
                 let imageLayout = imageNode.asyncLayout()
                 let arguments = TransformImageArguments(corners: ImageCorners(), imageSize: videoSize, boundingSize: videoSize, intrinsicInsets: UIEdgeInsets(), resizeMode: .aspectFill, emptyColor: .clear, custom: nil)

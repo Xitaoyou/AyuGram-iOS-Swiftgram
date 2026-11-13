@@ -816,7 +816,10 @@ class ChatControllerNode: ASDisplayNode, ASScrollViewDelegate {
                 break
             }
         }
-        if let displayAdPeer {
+        // AYG: Disable Ads must stop the context from existing at all. Nulling the
+        // copy handed to ChatHistoryListNode still leaves this object alive and
+        // ChatController.activate() sends getSponsoredMessages anyway.
+        if let displayAdPeer, !AyuGramSettings.shared.extra.disableAds {
             self.adMessagesContext = context.engine.messages.adMessages(peerId: displayAdPeer, activateManually: true)
         } else {
             self.adMessagesContext = nil

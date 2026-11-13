@@ -1,5 +1,6 @@
 import SGGTranslate
 import SGTranslationLangFix
+import SGSimpleSettings
 
 import Foundation
 import Postbox
@@ -486,39 +487,83 @@ private func _internal_translateMessagesByPeerId(account: Account, peerId: Engin
 }
 
 func _internal_translateMessagesViaText(account: Account, messagesDict: [EngineMessage.Id: String], fromLang: String?, toLang: String, enableLocalIfPossible: Bool, generateEntitiesFunction: @escaping (String) -> [MessageTextEntity]) -> Signal<Never, TranslationError> {
-    var listOfSignals: [Signal<Void, TranslationError>] = []
-    for (messageId, text) in messagesDict {
-        listOfSignals.append(
-            //                _internal_translate(network: account.network, text: text, toLang: toLang)
-            //                |> mapToSignal { result -> Signal<Void, TranslationError> in
-            //                guard let translatedText = result else {
-            //                    return .complete()
-            //                }
-            gtranslate(text, toLang)
-            |> mapError { _ -> TranslationError in
-                return .generic
-            }
-            |> mapToSignal { translatedText -> Signal<Void, TranslationError> in
-//                guard case let .result(translatedText) = result else {
-//                    return .complete()
-//                }
-                return account.postbox.transaction { transaction in
-                    transaction.updateMessage(messageId, update: { currentMessage in
-                        let updatedAttribute: TranslationMessageAttribute = TranslationMessageAttribute(text: translatedText, entities: generateEntitiesFunction(translatedText), toLang: toLang)
-                        let storeForwardInfo = currentMessage.forwardInfo.flatMap(StoreMessageForwardInfo.init)
-                        var attributes = currentMessage.attributes.filter { !($0 is TranslationMessageAttribute) }
-
-                        attributes.append(updatedAttribute)
-
-                        return .update(StoreMessage(id: currentMessage.id, customStableId: nil, globallyUniqueId: currentMessage.globallyUniqueId, groupingKey: currentMessage.groupingKey, threadId: currentMessage.threadId, timestamp: currentMessage.timestamp, flags: StoreMessageFlags(currentMessage.flags), tags: currentMessage.tags, globalTags: currentMessage.globalTags, localTags: currentMessage.localTags, forwardInfo: storeForwardInfo, authorId: currentMessage.author?.id, text: currentMessage.text, attributes: attributes, media: currentMessage.media))
-                    })
-                }
-                |> castError(TranslationError.self)
-//                |> castError(TranslateFetchError.self)
-            }
-        )
+    guard !messagesDict.isEmpty else {
+        return .complete()
     }
-    return combineLatest(listOfSignals) |> ignoreValues
+
+    // AYG: this function used to hard-code a scrape of translate.google.com/m and
+    // disabled the free text-based MTProto RPC entirely. That page no longer serves
+    // `div.result-container`, so every batch failed; the caller swallowed the error
+    // and no TranslationMessageAttribute was written back — the only condition that
+    // clears the blue shimmer. Restore the free RPC as primary, honour the Google
+    // engine setting, keep Google as a fallback, and ALWAYS write back an attribute.
+    let backend = SGSimpleSettings.shared.translationBackendEnum
+    let successCount = Atomic<Int>(value: 0)
+
+    var itemSignals: [Signal<Void, NoError>] = []
+    for (messageId, text) in messagesDict {
+        let primary: Signal<String, TranslationError>
+        if backend == .gtranslate {
+            primary = gtranslate(text, toLang)
+            |> mapError { _ -> TranslationError in return .generic }
+        } else {
+            primary = _internal_translate(network: account.network, text: text, toLang: toLang)
+            |> mapToSignal { result -> Signal<String, TranslationError> in
+                if let result, !result.0.isEmpty {
+                    return .single(result.0)
+                }
+                return .fail(.generic)
+            }
+            |> `catch` { _ -> Signal<String, TranslationError> in
+                return gtranslate(text, toLang)
+                |> mapError { _ -> TranslationError in return .generic }
+            }
+        }
+
+        let one: Signal<Void, NoError> = primary
+        |> `catch` { _ -> Signal<String, NoError> in
+            // Falling back to the original text still clears the shimmer: an
+            // untranslated bubble is better than one that spins forever.
+            return .single(text)
+        }
+        |> mapToSignal { translatedText -> Signal<Void, NoError> in
+            if translatedText != text {
+                let _ = successCount.modify { $0 + 1 }
+            }
+            let updatedAttribute = TranslationMessageAttribute(text: translatedText, entities: generateEntitiesFunction(translatedText), toLang: toLang)
+            return account.postbox.transaction { transaction in
+                transaction.updateMessage(messageId, update: { currentMessage in
+                    let storeForwardInfo = currentMessage.forwardInfo.flatMap(StoreMessageForwardInfo.init)
+                    var attributes = currentMessage.attributes.filter { !($0 is TranslationMessageAttribute) }
+                    attributes.append(updatedAttribute)
+                    return .update(StoreMessage(id: currentMessage.id, customStableId: nil, globallyUniqueId: currentMessage.globallyUniqueId, groupingKey: currentMessage.groupingKey, threadId: currentMessage.threadId, timestamp: currentMessage.timestamp, flags: StoreMessageFlags(currentMessage.flags), tags: currentMessage.tags, globalTags: currentMessage.globalTags, localTags: currentMessage.localTags, forwardInfo: storeForwardInfo, authorId: currentMessage.author?.id, text: currentMessage.text, attributes: attributes, media: currentMessage.media))
+                })
+            }
+        }
+        itemSignals.append(one)
+    }
+
+    // At most 3 RPCs in flight: a screenful of messages must not trigger
+    // FLOOD_WAIT, and one failed message must not discard its neighbours.
+    let windowSize = 3
+    var chained: Signal<Never, NoError> = .complete()
+    var start = 0
+    while start < itemSignals.count {
+        let end = min(start + windowSize, itemSignals.count)
+        let windowSignal: Signal<Never, NoError> = combineLatest(Array(itemSignals[start ..< end])) |> ignoreValues
+        chained = chained |> then(windowSignal)
+        start = end
+    }
+
+    let finalSignal: Signal<Never, TranslationError> = Signal { subscriber in
+        if successCount.with({ $0 }) > 0 {
+            subscriber.putCompletion()
+        } else {
+            subscriber.putError(.generic)
+        }
+        return ActionDisposable { }
+    }
+    return (chained |> castError(TranslationError.self)) |> then(finalSignal)
 }
 
 func _internal_togglePeerMessagesTranslationHidden(account: Account, peerId: EnginePeer.Id, hidden: Bool) -> Signal<Never, NoError> {

@@ -210,14 +210,19 @@ private func validatePeerReadState(network: Network, postbox: Postbox, stateMana
                 loop: for (namespace, currentState) in currentReadState.states {
                     if namespace == Namespaces.Message.Cloud {
                         switch currentState {
-                        case let .idBased(localMaxIncomingReadId, _, _, _, _):
+                        case let .idBased(localMaxIncomingReadId, localMaxOutgoingReadId, localMaxKnownId, localCount, localMarkedUnread):
                             if case let .idBased(updatedMaxIncomingReadId, _, _, updatedCount, updatedMarkedUnread) = readState {
                                 if localReadMarkIsAheadOfServer(localMaxIncomingReadId: localMaxIncomingReadId, serverMaxIncomingReadId: updatedMaxIncomingReadId, serverCount: updatedCount, serverMarkedUnread: updatedMarkedUnread) {
                                     // AyuGram: reads made while receipts are hidden stay local, so
                                     // the server stays behind on purpose. Retrying here restarted
                                     // validation immediately and forever, flooding the network and
                                     // the state manager until nothing else loaded. Keep the local
-                                    // read state and stop validating instead.
+                                    // read mark and stop validating — but never shrink the badge:
+                                    // the server's count can be larger when many messages arrived
+                                    // while the local mark was pinned.
+                                    if updatedCount > localCount {
+                                        transaction.resetIncomingReadStates([peerId: [Namespaces.Message.Cloud: .idBased(maxIncomingReadId: localMaxIncomingReadId, maxOutgoingReadId: localMaxOutgoingReadId, maxKnownId: localMaxKnownId, count: updatedCount, markedUnread: localMarkedUnread)]])
+                                    }
                                     transaction.confirmSynchronizedIncomingReadState(peerId)
                                     return nil
                                 }

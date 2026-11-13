@@ -1104,7 +1104,9 @@ public class GalleryController: ViewController, StandalonePresentableController,
         }))
         
         if let semaphore = semaphore {
-            let _ = semaphore.wait(timeout: DispatchTime.now() + 1.0)
+            // AYG: cap the synchronous first-frame wait instead of blocking the
+            // main thread behind a full second while media is still queued.
+            let _ = semaphore.wait(timeout: DispatchTime.now() + 0.25)
         }
         
         var syncResultApply: (() -> Void)?

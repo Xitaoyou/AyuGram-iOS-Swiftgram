@@ -1,5 +1,6 @@
 import Foundation
 import UIKit
+import SGSimpleSettings
 import AsyncDisplayKit
 import Display
 import TelegramCore
@@ -2708,7 +2709,10 @@ final class ChatListSearchListPaneNode: ASDisplayNode, ChatListSearchPaneNode {
                         |> then(
                             globalPeerSearchContext.searchRemotePeers(engine: context.engine, query: query)
                             |> mapToSignal { result in
-                                return context.engine.peers.searchAdPeers(query: query)
+                                let adPeersSignal: Signal<[AdPeer], NoError> = AyuGramSettings.shared.extra.disableAds
+                                    ? .single([])
+                                    : context.engine.peers.searchAdPeers(query: query)
+                                return adPeersSignal
                                 |> map { adPeers in
                                     return (result.0, result.1, adPeers, false)
                                 }
@@ -4242,9 +4246,13 @@ final class ChatListSearchListPaneNode: ASDisplayNode, ChatListSearchPaneNode {
                 }
             }
 
-            let remoteChannels: Signal<RecommendedChannels?, NoError> = context.engine.peers.recommendedChannels(peerId: nil)
+            let remoteChannels: Signal<RecommendedChannels?, NoError> = AyuGramSettings.shared.extra.disableAds
+                ? .single(nil)
+                : context.engine.peers.recommendedChannels(peerId: nil)
 
-            let _ = self.context.engine.peers.requestGlobalRecommendedChannelsIfNeeded().startStandalone()
+            if !AyuGramSettings.shared.extra.disableAds {
+                let _ = self.context.engine.peers.requestGlobalRecommendedChannelsIfNeeded().startStandalone()
+            }
 
             recentItems = combineLatest(
                 localChannels,

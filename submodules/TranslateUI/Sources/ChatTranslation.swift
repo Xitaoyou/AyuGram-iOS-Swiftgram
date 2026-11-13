@@ -321,19 +321,35 @@ public func translateMessageIds(context: AccountContext, messageIds: [EngineMess
         default:
             break
         }
-        if viaText {
-        return context.engine.messages.translateMessagesViaText(messagesDict: messageDictToTranslate, fromLang: fromLang, toLang: toLang, generateEntitiesFunction: { text in
-            generateTextEntities(text, enabledTypes: .all)
-        }, enableLocalIfPossible: enableLocalIfPossible) //context.sharedContext.immediateExperimentalUISettings.enableLocalTranslation)
-        |> `catch` { _ -> Signal<Never, NoError> in
+        // AYG: an empty batch must complete rather than reach an API that returns
+        // .never(), and every failure/timeout must reset the chat-wide switch. The
+        // shimmer only clears when a TranslationMessageAttribute is written back or
+        // translateToLanguage becomes nil; the old catch swallowed every error.
+        if messageDictToTranslate.isEmpty && messageIdsToTranslate.isEmpty {
             return .complete()
         }
-        } else {
-        if forQuickTranslate && messageIdsToTranslate.isEmpty { return .complete() } // Otherwise Telegram's API will return .never()
-        return context.engine.messages.translateMessages(messageIds: messageIdsToTranslate, fromLang: fromLang, toLang: toLang, enableLocalIfPossible: enableLocalIfPossible)
-        |> `catch` { _ -> Signal<Never, NoError> in
-            return translateMessageIds(context: context, messageIds: messageIdsToTranslate, fromLang: fromLang, toLang: toLang, viaText: true, forQuickTranslate: forQuickTranslate)
+        let resetTranslationSwitch = {
+            if let peerId = messageIds.first?.peerId {
+                let _ = updateChatTranslationStateInteractively(engine: context.engine, peerId: peerId, threadId: nil, { current in
+                    return current?.withIsEnabled(false)
+                }).startStandalone()
+            }
         }
+        if viaText {
+            return context.engine.messages.translateMessagesViaText(messagesDict: messageDictToTranslate, fromLang: fromLang, toLang: toLang, generateEntitiesFunction: { text in
+                generateTextEntities(text, enabledTypes: .all)
+            }, enableLocalIfPossible: enableLocalIfPossible)
+            |> timeout(60.0, queue: Queue.concurrentDefaultQueue(), alternate: .fail(.generic))
+            |> `catch` { _ -> Signal<Never, NoError> in
+                resetTranslationSwitch()
+                return .complete()
+            }
+        } else {
+            if messageIdsToTranslate.isEmpty { return .complete() }
+            return context.engine.messages.translateMessages(messageIds: messageIdsToTranslate, fromLang: fromLang, toLang: toLang, enableLocalIfPossible: enableLocalIfPossible)
+            |> `catch` { _ -> Signal<Never, NoError> in
+                return translateMessageIds(context: context, messageIds: messageIdsToTranslate, fromLang: fromLang, toLang: toLang, viaText: true, forQuickTranslate: forQuickTranslate)
+            }
         }
     } |> switchToLatest
 }

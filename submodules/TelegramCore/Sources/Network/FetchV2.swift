@@ -695,7 +695,14 @@ private final class FetchImpl {
                     maxPendingParts = min(maxPendingParts, state.window)
                 }
                 if self.knownSize == nil && state.completedRanges.isEmpty {
-                    maxPendingParts = 1
+                    // AYG: a fresh resource (a video cover has size == nil) used to be
+                    // limited to one part, so the first frame waited for a serial
+                    // round trip while prefetches filled the queue. Keep the adaptive
+                    // window when fastDownloads is on; otherwise allow a small
+                    // parallel probe window instead of 1.
+                    if !self.fastDownloads {
+                        maxPendingParts = min(maxPendingParts, 4)
+                    }
                 }
                 
                 if state.pendingParts.count < maxPendingParts && state.pendingReadyParts.count < state.maxPendingParts {

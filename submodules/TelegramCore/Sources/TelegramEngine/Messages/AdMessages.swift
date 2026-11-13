@@ -1,6 +1,7 @@
 import Foundation
 import Postbox
 import SwiftSignalKit
+import SGSimpleSettings
 internal import TelegramApi
 
 private class AdMessagesHistoryContextImpl {
@@ -451,7 +452,9 @@ private class AdMessagesHistoryContextImpl {
 
         self.stateValue = State(interPostInterval: nil, messages: [])
 
-        if messageId == nil {
+        // AYG: Disable Ads must also stop cached sponsored posts from being
+        // restored on launch, not just hide the bubble list.
+        if messageId == nil && !AyuGramSettings.shared.extra.disableAds {
             self.state.set(CachedState.getCached(postbox: account.postbox, peerId: peerId)
             |> mapToSignal { cachedState -> Signal<State, NoError> in
                 if let cachedState = cachedState, cachedState.timestamp >= Int32(Date().timeIntervalSince1970) - 5 * 60 {
@@ -481,7 +484,15 @@ private class AdMessagesHistoryContextImpl {
             return
         }
         self.isActivated = true
-        
+
+        // AYG: the only "Disable Ads" patch in the stock fork nulls the context
+        // handed to ChatHistoryListNode, but this object is still created and
+        // activated, so getSponsoredMessages is sent anyway. Stop it here.
+        if AyuGramSettings.shared.extra.disableAds {
+            self.stateValue = State(interPostInterval: nil, messages: [])
+            return
+        }
+
         let peerId = self.peerId
         let accountPeerId = self.account.peerId
         let account = self.account

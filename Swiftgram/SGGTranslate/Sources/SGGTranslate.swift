@@ -10,10 +10,14 @@ private let sgTranslateSessionConfiguration: URLSessionConfiguration = .ephemera
 private let sgTranslateSession: URLSession = URLSession(configuration: sgTranslateSessionConfiguration)
 
 public func getTranslateUrl(_ message: String, _ toLang: String) -> String {
-    let sanitizedMessage: String = message
-    var queryCharSet: CharacterSet = .urlQueryAllowed
-    queryCharSet.remove(charactersIn: "+&")
-    return "https://translate.google.com/m?hl=en&tl=\(toLang)&sl=auto&q=\(sanitizedMessage.addingPercentEncoding(withAllowedCharacters: queryCharSet) ?? "")"
+    // AYG: translate.google.com/m no longer serves the `div.result-container`
+    // this module used to scrape, so every fallback returned an empty string.
+    // Use the JSON endpoint shipped by Swiftgram upstream instead.
+    // Percent-encode everything except unreserved characters: .urlQueryAllowed
+    // still lets &, =, + and ? through and corrupts ordinary chat text.
+    let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "-._~"))
+    let encoded = message.addingPercentEncoding(withAllowedCharacters: allowed) ?? ""
+    return "https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=\(toLang)&dt=t&ie=UTF-8&oe=UTF-8&q=\(encoded)"
 }
 
 private func prepareResultString(_ str: String) -> String {
@@ -21,16 +25,18 @@ private func prepareResultString(_ str: String) -> String {
 }
 
 public func parseTranslateResponse(_ data: String) -> String {
-    do {
-        let document: Document = try SwiftSoup.parse(data)
-        if let resultContainer: Element = try document.select("div.result-container").first() {
-            return prepareResultString(try resultContainer.text())
-        } else if let tZero: Element = try document.select("div.t0").first() {
-            return prepareResultString(try tZero.text())
-        }
-    } catch {
+    guard let raw = data.data(using: .utf8),
+          let root = (try? JSONSerialization.jsonObject(with: raw)) as? [Any],
+          let blocks = root.first as? [Any] else {
+        return ""
     }
-    return ""
+    var result = ""
+    for block in blocks {
+        if let parts = block as? [Any], let part = parts.first as? String, !part.isEmpty {
+            result += part
+        }
+    }
+    return prepareResultString(result)
 }
 
 public func getGTranslateLang(_ userLang: String) -> String {
@@ -60,9 +66,9 @@ public func getGTranslateLang(_ userLang: String) -> String {
 public func requestTranslateUrl(url: URL) -> Signal<String, TranslateFetchError> {
     return Signal { subscriber in
         let completed: Atomic<Bool> = Atomic(value: false)
-        var request: URLRequest = URLRequest(url: url)
+        var request: URLRequest = URLRequest(url: url, timeoutInterval: 8.0)
         request.httpMethod = "GET"
-        request.setValue("Mozilla/4.0 (compatible;MSIE 6.0;Windows NT 5.1;SV1;.NET CLR 1.1.4322;.NET CLR 2.0.50727;.NET CLR 3.0.04506.30)", forHTTPHeaderField: "User-Agent")
+        request.setValue("Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1", forHTTPHeaderField: "User-Agent")
         let downloadTask: URLSessionDataTask = sgTranslateSession.dataTask(with: request, completionHandler: { data, response, _ in
             let _ = completed.swap(true)
             if let response: HTTPURLResponse = response as? HTTPURLResponse {
