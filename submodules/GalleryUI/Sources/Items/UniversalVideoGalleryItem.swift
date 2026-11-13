@@ -2255,6 +2255,13 @@ final class UniversalVideoGalleryItemNode: ZoomableContentGalleryItemNode {
             
             if let videoNode = self.videoNode {
                 if isCentral {
+                    // AYG: autoplay never calls fetchControls.fetch(), so the
+                    // priority boost added there was skipped for the common
+                    // "just opened the video" path. Boost it as soon as the
+                    // item becomes central instead.
+                    if let item = self.item, let content = item.content as? NativeVideoContent {
+                        self.fetchPriorityDisposable.set(self.context.engine.resources.pushPriorityDownload(resourceId: content.fileReference.media.resource.id.stringRepresentation, priority: 2))
+                    }
                     var isAnimated = false
                     if let item = self.item, let content = item.content as? NativeVideoContent {
                         isAnimated = content.fileReference.media.isAnimated

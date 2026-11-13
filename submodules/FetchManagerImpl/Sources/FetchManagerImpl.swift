@@ -122,6 +122,7 @@ private final class FetchManagerCategoryContext {
     private let postbox: Postbox
     private let storeManager: DownloadedMediaStoreManager?
     private let entryCompleted: (FetchManagerLocationEntryId) -> Void
+    private let entryFailed: (FetchManagerLocationEntryId) -> Void
     private let activeEntriesUpdated: () -> Void
     
     private var topEntryIdAndPriority: (FetchManagerLocationEntryId, FetchManagerPriorityKey)?
@@ -143,10 +144,11 @@ private final class FetchManagerCategoryContext {
         return false
     }
     
-    init(postbox: Postbox, storeManager: DownloadedMediaStoreManager?, entryCompleted: @escaping (FetchManagerLocationEntryId) -> Void, activeEntriesUpdated: @escaping () -> Void) {
+    init(postbox: Postbox, storeManager: DownloadedMediaStoreManager?, entryCompleted: @escaping (FetchManagerLocationEntryId) -> Void, entryFailed: @escaping (FetchManagerLocationEntryId) -> Void, activeEntriesUpdated: @escaping () -> Void) {
         self.postbox = postbox
         self.storeManager = storeManager
         self.entryCompleted = entryCompleted
+        self.entryFailed = entryFailed
         self.activeEntriesUpdated = activeEntriesUpdated
     }
     
@@ -182,7 +184,9 @@ private final class FetchManagerCategoryContext {
             if let updatedPriorityKey = updatedPriorityKey {
                 if let (topId, topPriority) = self.topEntryIdAndPriority {
                     if updatedPriorityKey < topPriority {
-                        self.topEntryIdAndPriority = (entry.id, updatedPriorityKey)
+                        if self.activeEntryIds.count < self.maxActiveEntries || self.activeEntryIds.contains(entry.id) {
+                            self.topEntryIdAndPriority = (entry.id, updatedPriorityKey)
+                        }
                     } else if updatedPriorityKey > topPriority && topId == id {
                         self.topEntryIdAndPriority = nil
                     }
@@ -230,6 +234,7 @@ private final class FetchManagerCategoryContext {
                 if let entry = self.entries[id] {
                     activeContext.ranges = ranges
                     let entryCompleted = self.entryCompleted
+                    let entryFailed = self.entryFailed
                     let storeManager = self.storeManager
                     let parsedRanges: [(Range<Int64>, MediaBoxFetchPriority)]?
                     
@@ -283,6 +288,8 @@ private final class FetchManagerCategoryContext {
                     |> deliverOnMainQueue).start(next: { _ in
                         Logger.shared.log("FetchManager", "Completed fetching \(entry.resourceReference.resource.id.stringRepresentation)")
                         entryCompleted(id)
+                    }, error: { _ in
+                        entryFailed(id)
                     })
                 } else {
                     assertionFailure()
@@ -333,6 +340,10 @@ private final class FetchManagerCategoryContext {
         }
         
         if let topEntryId = self.topEntryIdAndPriority?.0 {
+            if !self.activeEntryIds.contains(topEntryId), self.activeEntryIds.count >= self.maxActiveEntries {
+                self.topEntryIdAndPriority = nil
+                return false
+            }
             if let entry = self.entries[topEntryId] {
                 let _ = self.activeEntryIds.insert(topEntryId)
                 let ranges = entry.combinedRanges
@@ -397,6 +408,7 @@ private final class FetchManagerCategoryContext {
                     }
                     
                     let entryCompleted = self.entryCompleted
+                    let entryFailed = self.entryFailed
                     let storeManager = self.storeManager
                     activeContext.disposable?.dispose()
                     if isVideoPreload {
@@ -406,6 +418,8 @@ private final class FetchManagerCategoryContext {
                         |> then(.single(.local))
                         |> deliverOnMainQueue).start(next: { _ in
                             entryCompleted(topEntryId)
+                        }, error: { _ in
+                            entryFailed(topEntryId)
                         })
                     } else if ranges.isEmpty {
                     } else {
@@ -431,6 +445,31 @@ private final class FetchManagerCategoryContext {
                             userContentType = .other
                         }
                         
+                        // AYG: a user-opened video only ever requested
+                        // 0..<Int64.max, so isVideoPreload stayed false and
+                        // CachedVideoFirstFrameRepresentation was never generated.
+                        // The blurred placeholder then survived even at 50%
+                        // progress. Run a bounded 4s frame preload in parallel
+                        // with the full download, with one retry if it stalls.
+                        if entry.userInitiated, case .video = entry.statsCategory {
+                            let framePreload: Signal<Never, NoError> = preloadVideoResource(
+                                postbox: postbox,
+                                userLocation: userLocation,
+                                userContentType: .video,
+                                resourceReference: entry.resourceReference,
+                                duration: 4.0
+                            )
+                            let fallbackPreload: Signal<Never, NoError> = (preloadVideoResource(
+                                postbox: postbox,
+                                userLocation: userLocation,
+                                userContentType: .video,
+                                resourceReference: entry.resourceReference,
+                                duration: 4.0
+                            )
+                            |> timeout(20.0, queue: Queue.concurrentDefaultQueue(), alternate: .complete()))
+                            let _ = (framePreload
+                            |> timeout(20.0, queue: Queue.concurrentDefaultQueue(), alternate: fallbackPreload)).startStandalone()
+                        }
                         activeContext.disposable = (fetchedMediaResource(mediaBox: postbox.mediaBox, userLocation: userLocation, userContentType: userContentType, reference: entry.resourceReference, ranges: parsedRanges, statsCategory: entry.statsCategory, reportResultStatus: true, continueInBackground: entry.userInitiated)
                         |> mapToSignal { type -> Signal<FetchResourceSourceType, FetchResourceError> in
                             if filterDownloadStatsEntry(entry: entry), case let .message(message, _) = entry.mediaReference, let messageId = message.id, case .remote = type {
@@ -449,10 +488,15 @@ private final class FetchManagerCategoryContext {
                         |> deliverOnMainQueue).start(next: { _ in
                             Logger.shared.log("FetchManager", "Completed fetching \(entry.resourceReference.resource.id.stringRepresentation)")
                             entryCompleted(topEntryId)
+                        }, error: { _ in
+                            entryFailed(topEntryId)
                         })
                     }
+                    // AYG: clear the pointer even when all slots are busy,
+                    // otherwise maybeFindAndActivateNewTopEntry() never
+                    // re-scans and the whole category stalls.
+                    self.topEntryIdAndPriority = nil
                     if self.activeEntryIds.count < self.maxActiveEntries {
-                        self.topEntryIdAndPriority = nil
                         let _ = self.maybeFindAndActivateNewTopEntry()
                     }
                     return true
@@ -747,6 +791,15 @@ public final class FetchManagerImpl: FetchManager {
                     }
                     strongSelf.withCategoryContext(key, { context in
                         context.cancelEntry(id, isCompleted: true)
+                    })
+                }
+            }, entryFailed: { [weak self] id in
+                queue.async {
+                    guard let strongSelf = self else {
+                        return
+                    }
+                    strongSelf.withCategoryContext(key, { context in
+                        context.cancelEntry(id, isCompleted: false)
                     })
                 }
             }, activeEntriesUpdated: { [weak self] in

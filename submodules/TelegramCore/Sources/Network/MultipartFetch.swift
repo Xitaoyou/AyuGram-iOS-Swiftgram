@@ -748,17 +748,12 @@ private final class MultipartFetchManager {
     
     
     private func processFloodWaitError(error: String) {
-        var networkSpeedLimitSubject: NetworkSpeedLimitedEvent.DownloadSubject?
-        if let location = self.parameters?.location {
-            if let messageId = location.messageId {
-                networkSpeedLimitSubject = .message(messageId)
-            }
+        guard error.hasPrefix("FLOOD_PREMIUM_WAIT") else {
+            return
         }
-        if let subject = networkSpeedLimitSubject {
-            if error.hasPrefix("FLOOD_PREMIUM_WAIT") {
-                self.network.addNetworkSpeedLimitedEvent(event: .download(subject))
-            }
-        }
+        // AYG: V2 backs off its part window for the same throttle. The
+        // "Subscribe to Premium" toast cannot change a server-side account
+        // limit and only interrupts batch loading, so V1 stays quiet too.
     }
     
     func checkState() {

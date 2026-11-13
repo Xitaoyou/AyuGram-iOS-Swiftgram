@@ -695,9 +695,10 @@ private final class FetchImpl {
                 )
                 
                 var maxPendingParts = state.maxPendingParts
-                if self.fastDownloads {
-                    maxPendingParts = min(maxPendingParts, state.window)
-                }
+                // AYG: iOS ships the mtProtoKit engine by default, so gating the
+                // adaptive window behind fastDownloads made every 420 backoff a
+                // no-op on device. Apply it on both engines.
+                maxPendingParts = min(maxPendingParts, state.window)
                 if self.knownSize == nil && state.completedRanges.isEmpty {
                     // AYG: a fresh resource (a video cover has size == nil) used to be
                     // limited to one part, so the first frame waited for a serial
@@ -913,6 +914,7 @@ private final class FetchImpl {
             case let .cdn(cdnData):
                 let requestedOffset = part.fetchRange.lowerBound
                 
+                let queue = self.queue
                 let throughputMeter = self.network.downloadThroughputMeter
                 filePartRequest = self.network.multiplexedRequestManager.requestWithAdditionalInfo(
                     to: .cdn(cdnData.id),
@@ -925,6 +927,14 @@ private final class FetchImpl {
                     ),
                     tag: self.parameters?.tag,
                     continueInBackground: self.continueInBackground,
+                    onFloodWaitError: { [weak self] error in
+                        queue.async {
+                            guard let self else {
+                                return
+                            }
+                            self.processFloodWaitError(error: error)
+                        }
+                    },
                     expectedResponseSize: Int32(requestedLength)
                 )
                 |> mapError { error -> MTRpcError in
@@ -1054,9 +1064,7 @@ private final class FetchImpl {
                             self.fallBackToMaster(sourceDatacenterId: cdnData.sourceDatacenterId, reason: "\(data.count) of \(requestedLength) bytes at \(fetchRange.lowerBound), known size \(String(describing: self.knownSize))")
                             break
                         }
-                        if self.fastDownloads {
-                            self.adaptWindow(state: state, latency: CFAbsoluteTimeGetCurrent() - requestStarted, bytes: Int64(data.count))
-                        }
+                        self.adaptWindow(state: state, latency: CFAbsoluteTimeGetCurrent() - requestStarted, bytes: Int64(data.count))
                         if let verifyPartHashData {
                             Logger.shared.log("FetchV2", "\(self.loggingIdentifier): stashing data part \(partRange) (aligned as \(fetchRange)) for hash verification")
                             
@@ -1390,17 +1398,27 @@ private final class FetchImpl {
         }
         
         private func processFloodWaitError(error: String) {
-            // AYG: FLOOD_PREMIUM_WAIT_* is a server-side, account-tier throttle.
-            // The stock handler only turned it into a "Subscribe to Premium" toast
-            // while MtProtoKit's flood-wait retry kept holding a worker slot, so
-            // one throttled part stalled every other queued part. Halve the part
-            // window instead; fewer in-flight requests stops the throttling.
+            // AYG: FLOOD_PREMIUM_WAIT_* is a server-side account throttle.
+            // MtProtoKit retries the throttled request in place and keeps the
+            // multiplexer slot occupied until the wait elapses, so a saturated
+            // queue never even reaches the priority sort. Disposing the parts
+            // beyond the new window frees those slots immediately; update()
+            // re-queues their ranges under the smaller window.
             guard error.hasPrefix("FLOOD_PREMIUM_WAIT") else {
                 return
             }
             if case let .fetching(state) = self.state {
                 state.window = max(fastDownloadMinWindow, state.window / 2)
                 state.lastWindowDecrease = CFAbsoluteTimeGetCurrent()
+                let keepCount = max(1, state.window)
+                if state.pendingParts.count > keepCount {
+                    let dropped = Array(state.pendingParts.suffix(from: keepCount))
+                    state.pendingParts.removeLast(state.pendingParts.count - keepCount)
+                    for part in dropped {
+                        part.disposable?.dispose()
+                    }
+                }
+                self.update()
             }
         }
     }

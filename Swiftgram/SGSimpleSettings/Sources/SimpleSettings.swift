@@ -635,7 +635,10 @@ public func getSGDownloadPartSize(_ default: Int64, fileSize: Int64?) -> Int64 {
             if let fileSize, fileSize <= smallFileSizeThreshold {
                 return `default`
             }
-            return 1024 * 1024
+            // AYG: a 1MB part holds a multiplexer slot far longer than 512KB
+            // and coincides with partDivision, which aggravated account-tier
+            // throttling. Differentiate the top tier by concurrency instead.
+            return 512 * 1024
         default:
             return `default`
     }
