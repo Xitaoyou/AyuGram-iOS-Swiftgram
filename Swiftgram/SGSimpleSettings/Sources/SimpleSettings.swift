@@ -635,10 +635,14 @@ public func getSGDownloadPartSize(_ default: Int64, fileSize: Int64?) -> Int64 {
             if let fileSize, fileSize <= smallFileSizeThreshold {
                 return `default`
             }
-            // AYG: a 1MB part holds a multiplexer slot far longer than 512KB
-            // and coincides with partDivision, which aggravated account-tier
-            // throttling. Differentiate the top tier by concurrency instead.
-            return 512 * 1024
+            // AYG: the account throttle counts REQUESTS, not bytes. 1MB is
+            // the largest part upload.getFile accepts (and is in
+            // possiblePartLengths), so maximum doubles the bytes carried by
+            // the same 8 in-flight requests instead of adding requests that
+            // only earn a FLOOD_PREMIUM_WAIT stall. Slower per-request wall
+            // time is harmless now that adaptWindow no longer treats it as
+            // congestion.
+            return 1024 * 1024
         default:
             return `default`
     }
@@ -646,17 +650,16 @@ public func getSGDownloadPartSize(_ default: Int64, fileSize: Int64?) -> Int64 {
 
 public func getSGMaxPendingParts(_ default: Int) -> Int {
     // AYG: FLOOD_PREMIUM_WAIT_* counts in-flight upload.getFile requests, so
-    // these are ceilings rather than accelerators. Blindly raising them used
-    // to make batches slower. FetchV2 now learns the account's real ceiling
-    // and backs off before another 420, while CDN runs on its own DC pool and
-    // larger parts move more bytes per request. The top tier can therefore
-    // use the available bandwidth instead of being pinned at 8 parts.
+    // concurrency is a LIABILITY, not an accelerator. Raising the top tier to
+    // 12 parts made maximum slower than the "none" tier (V1's fixed 8 parts).
+    // Keep the request rate at 8 and let getSGDownloadPartSize's 1MB parts
+    // double the bytes per request instead.
     let currentDownloadSetting = SGSimpleSettings.shared.downloadSpeedBoost
     switch (currentDownloadSetting) {
         case SGSimpleSettings.DownloadSpeedBoostValues.medium.rawValue:
-            return min(`default` + 2, 10)
+            return min(`default`, 6)
         case SGSimpleSettings.DownloadSpeedBoostValues.maximum.rawValue:
-            return min(`default` + 6, 14)
+            return min(`default` + 2, 8)
         default:
             return min(`default`, 4)
     }

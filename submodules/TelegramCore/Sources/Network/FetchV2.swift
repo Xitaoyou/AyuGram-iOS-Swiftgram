@@ -106,17 +106,15 @@ private let fetchV2RefreshedFileReferences = Atomic<Set<String>>(value: Set())
 
 private let fastDownloadMasterPendingParts = 16
 private let fastDownloadCdnPendingParts = 32
-// AYG: the throttle is per in-flight upload.getFile request, not per byte.
-// Start closer to the account's usable ceiling so the ramp-up does not waste
-// the first seconds of every download; processFloodWaitError learns the real
-// ceiling and adaptWindow never climbs above it.
+// AYG: the throttle counts in-flight upload.getFile REQUESTS, not bytes.
+// The way past it is therefore a full 1MB part per request at a request rate
+// the account tolerates - not more concurrent requests. 8 is the same rate
+// V1 uses, so maximum moves twice the bytes without provoking more 420s.
 private let fastDownloadInitialWindow = 8
 private let fastDownloadMinWindow = 2
-private let fastDownloadCeilingProbeInterval: Double = 60.0
-private let fastDownloadFastPartLatency = 1.0
-private let fastDownloadSlowPartLatency = 2.0
+private let fastDownloadCeilingProbeInterval: Double = 15.0
 private let fastDownloadSmallPartSize: Int64 = 128 * 1024
-private let fastDownloadLargePartSize: Int64 = 512 * 1024
+private let fastDownloadLargePartSize: Int64 = 1024 * 1024
 private let fastDownloadLargePartThroughput: Double = 4.0 * 1024.0 * 1024.0
 private let fastDownloadSmallPartThroughput: Double = 1.5 * 1024.0 * 1024.0
 private let maxCdnFailuresBeforeFallback = 4
@@ -520,20 +518,13 @@ private final class FetchImpl {
             } else {
                 self.defaultPartSize = getSGDownloadPartSize(128 * 1024, fileSize: self.size)
             }
-            // AYG: CDN parts used to be 128KB regardless of the speed tier.
-            // 256KB is still a multiple of cdnHashBlockLength (128KB) and of
-            // partAlignment, so hash verification stays valid while each
-            // request moves twice the bytes under the same request budget.
-            self.cdnPartSize = 256 * 1024
+            self.cdnPartSize = 128 * 1024
             // AYG: the stock code bypassed getSGMaxPendingParts on the rust
             // engine, so the setting only enlarged partSize (more aggressive)
             // and never applied a working concurrency ceiling.
             let pendingParts = getSGMaxPendingParts(6)
             self.masterPendingParts = self.fastDownloads ? min(fastDownloadMasterPendingParts, pendingParts) : pendingParts
-            // AYG: upload.getCdnFile is a separate RPC on a separate DC pool,
-            // so give the CDN lane double the in-flight budget on EVERY engine
-            // instead of only on rust.
-            self.cdnPendingParts = min(fastDownloadCdnPendingParts, pendingParts * 2)
+            self.cdnPendingParts = self.fastDownloads ? min(fastDownloadCdnPendingParts, pendingParts * 2) : pendingParts
             
             // The resource id tells concurrent downloads apart; an Api value prints only its constructor name.
             self.loggingIdentifier = resource.id.stringRepresentation
@@ -655,10 +646,9 @@ private final class FetchImpl {
                                     self.commitPendingReadyPart(state: state, partRange: pendingReadyPart.partRange, fetchRange: pendingReadyPart.fetchRange, data: pendingReadyPart.cleanData)
                                 } else {
                                     Logger.shared.log("FetchV2", "\(self.loggingIdentifier): unable to find \(pendingReadyPart.fetchRange) hash check failed")
-                                    // AYG: CDN is now requested on every engine,
-                                    // so hash failures must be counted here too
-                                    // or the transfer can never fall back.
-                                    self.cdnVerificationFailures += 1
+                                    if self.fastDownloads {
+                                        self.cdnVerificationFailures += 1
+                                    }
                                 }
                             }
                         }
@@ -668,7 +658,7 @@ private final class FetchImpl {
                     }
                 }
                 
-                if self.cdnVerificationFailures >= maxCdnFailuresBeforeFallback, case let .cdn(cdnData) = state.fetchLocation {
+                if self.fastDownloads, self.cdnVerificationFailures >= maxCdnFailuresBeforeFallback, case let .cdn(cdnData) = state.fetchLocation {
                     self.fallBackToMaster(sourceDatacenterId: cdnData.sourceDatacenterId, reason: "\(self.cdnVerificationFailures) parts failed hash verification")
                     self.update()
                     return
@@ -1007,12 +997,15 @@ private final class FetchImpl {
                             consumerId: self.consumerId,
                             resourceId: self.resource.id.stringRepresentation,
                             data: Api.functions.upload.getFile(
-                                // AYG: cdn_supported was gated behind the rust
-                                // engine, so iOS never asked for a CDN redirect
-                                // and every part went through the throttled
-                                // main DC. upload.getCdnFile is a different RPC
-                                // on a separate DC pool.
-                                flags: !self.cdnDisabled ? (1 << 1) : 0,
+                                // AYG: requesting cdn_supported on mtProtoKit
+                                // was a net loss. Every CDN part then needs a
+                                // getCdnFileHashes round trip on the THROTTLED
+                                // main DC plus SHA256, and the iOS CDN failure
+                                // / retry paths are rust-gated, so a bad CDN
+                                // can stall or fail the whole transfer. The
+                                // throttle counts requests, not bytes: fewer,
+                                // larger requests on the main DC are faster.
+                                flags: self.fastDownloads && !self.cdnDisabled ? (1 << 1) : 0,
                                 location: inputLocation,
                                 offset: part.fetchRange.lowerBound,
                                 limit: Int32(requestedLength)),
@@ -1123,10 +1116,9 @@ private final class FetchImpl {
                             maxPendingParts: self.cdnPendingParts,
                             decryptionState: nil
                         )
-                        // AYG: keep already-downloaded ranges when switching
-                        // to CDN on every engine, not only on rust; otherwise
-                        // iOS re-downloads the head of the file.
-                        cdnState.completedRanges = state.completedRanges
+                        if self.fastDownloads {
+                            cdnState.completedRanges = state.completedRanges
+                        }
                         self.state = .fetching(cdnState)
                     case let .cdnRefresh(cdnData, refreshToken):
                         if self.fastDownloads {
@@ -1255,24 +1247,23 @@ private final class FetchImpl {
         
         private func adaptWindow(state: FetchingState, latency: Double, bytes: Int64) {
             let now = CFAbsoluteTimeGetCurrent()
-            if latency > fastDownloadSlowPartLatency {
-                if now - state.lastWindowDecrease > latency {
-                    state.window = max(fastDownloadMinWindow, state.window / 2)
-                    state.lastWindowDecrease = now
+            // AYG: `latency` is one part's wall-clock time (queueing + network
+            // + any flood-wait). A 512KB/1MB part legitimately takes over 2s,
+            // so the old 1s/2s thresholds halved the window on EVERY large
+            // part and pinned maximum at window = 2 - slower than V1's fixed
+            // 8 parts. Only a real 420 may shrink the window now. The ceiling
+            // probe must also be unconditional: it used to live in the
+            // "latency < 1s" branch, which a large part can never reach, so a
+            // throttled account was permanently locked at the floor.
+            let _ = latency
+            if now - self.lastCeilingProbe > fastDownloadCeilingProbeInterval {
+                self.lastCeilingProbe = now
+                if let ceiling = self.learnedWindowCeiling {
+                    self.learnedWindowCeiling = min(ceiling + 1, state.maxPendingParts)
                 }
-            } else if latency < fastDownloadFastPartLatency {
-                // AYG: creep back up once a minute in case the account's
-                // throttle budget has recovered, but never jump straight back
-                // into the window that just triggered a 420.
-                if now - self.lastCeilingProbe > fastDownloadCeilingProbeInterval {
-                    self.lastCeilingProbe = now
-                    if let ceiling = self.learnedWindowCeiling {
-                        self.learnedWindowCeiling = min(ceiling + 1, state.maxPendingParts)
-                    }
-                }
-                let ceiling = self.learnedWindowCeiling ?? state.maxPendingParts
-                state.window = min(ceiling, state.window + 2)
             }
+            let ceiling = self.learnedWindowCeiling ?? state.maxPendingParts
+            state.window = min(ceiling, state.window + 1)
             
             state.recentParts.append((now, bytes))
             state.recentParts.removeAll(where: { now - $0.time > 2.0 })

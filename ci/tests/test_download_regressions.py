@@ -128,16 +128,20 @@ class DownloadRegressionTests(unittest.TestCase):
     def test_speed_setting_is_a_ceiling_on_the_rust_engine(self):
         self.assertIn('min(fastDownloadMasterPendingParts, pendingParts)', self.fetch_v2())
         settings = self.text('Swiftgram/SGSimpleSettings/Sources/SimpleSettings.swift')
-        self.assertIn('return min(`default` + 2, 10)', settings)
-        self.assertIn('return min(`default` + 6, 14)', settings)
+        self.assertIn('return min(`default`, 6)', settings)
+        self.assertIn('return min(`default` + 2, 8)', settings)
         self.assertIn('return min(`default`, 4)', settings)
+        self.assertNotIn('return min(`default` + 6, 14)', settings,
+                         '12 concurrent parts earned a 420 and was slower than V1')
 
-    def test_maximum_tier_part_size_is_bounded(self):
+    def test_maximum_tier_uses_the_protocol_maximum_part_size(self):
         settings = self.text('Swiftgram/SGSimpleSettings/Sources/SimpleSettings.swift')
         maximum = settings.split('DownloadSpeedBoostValues.maximum.rawValue:', 1)[1]
         maximum = maximum.split('default:', 1)[0]
-        self.assertIn('return 512 * 1024', maximum)
-        self.assertNotIn('1024 * 1024', maximum)
+        self.assertIn('return 1024 * 1024', maximum)
+        self.assertNotIn('return 512 * 1024', maximum)
+        # 1MB is the largest value upload.getFile accepts and is aligned.
+        self.assertIn(1048576, [1 << i for i in range(10, 21)])
 
     def test_opened_video_parts_are_prioritised(self):
         gallery = self.gallery_video()

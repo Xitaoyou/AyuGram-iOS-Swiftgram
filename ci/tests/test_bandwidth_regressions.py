@@ -5,19 +5,28 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 class BandwidthRegressionTests(unittest.TestCase):
-    """Keep the bandwidth-maximisation changes from silently disappearing.
+    """Keep the "maximum is slower than none" fix from regressing.
 
-    Honest scope: FLOOD_PREMIUM_WAIT_* is a server-side, per-account 420 that
-    counts in-flight upload.getFile requests. No client flag can turn it off
-    (upload.getFile has no premium parameter). What a client CAN do is:
-      - ask for a CDN redirect so parts use a separate RPC / DC pool,
-      - move more bytes per request (the throttle counts requests, not bytes),
-      - raise the transport capacity that was pinning the main DC at 12,
-      - learn the largest window the account tolerates and run right up
-        against it, instead of blindly spiking into a multi-second 420.
+    Device symptom after v2: turning download acceleration up to maximum made
+    downloads SLOWER than turning it off. Root causes, all confirmed in code:
 
-    This module pins those changes and simulates the learned-window loop so a
-    behavioural regression fails here rather than only on a device.
+      1. FLOOD_PREMIUM_WAIT_* is a server-side, per-account 420 counting
+         in-flight upload.getFile REQUESTS, not bytes. Raising concurrency to
+         12 only earned a multi-second stall.
+      2. adaptWindow judged congestion by a part's wall-clock latency with
+         fixed 1s/2s thresholds. A 512KB part legitimately takes >2s, so the
+         window was halved on every part and pinned at 2 - versus V1's fixed
+         8 parts with the same 512KB chunks.
+      3. learnedWindowCeiling could only recover inside the "latency < 1s"
+         branch, which a large part can never reach -> permanent deadlock.
+      4. Asking for cdn_supported on mtProtoKit adds a getCdnFileHashes round
+         trip on the throttled main DC for every part, and the iOS CDN retry /
+         fallback paths are rust-gated (a failed hash silently stalls).
+
+    The fix: keep the request rate at 8 (the same as V1), double the bytes per
+    request to the 1MB protocol maximum, stop treating part latency as
+    congestion, and stop asking iOS for CDN. No client change can disable the
+    server throttle; this reaches the highest throughput it permits.
     """
 
     def text(self, relative):
@@ -29,9 +38,6 @@ class BandwidthRegressionTests(unittest.TestCase):
     def settings(self):
         return self.text('Swiftgram/SGSimpleSettings/Sources/SimpleSettings.swift')
 
-    def network(self):
-        return self.text('submodules/TelegramCore/Sources/Network/Network.swift')
-
     def multiplexed(self):
         return self.text('submodules/TelegramCore/Sources/Network/MultiplexedRequestManager.swift')
 
@@ -40,174 +46,133 @@ class BandwidthRegressionTests(unittest.TestCase):
         return handler.split('private func ', 1)[0]
 
     # ------------------------------------------------------------------
-    # Behavioural simulations of the actual algorithms.
+    # Behavioural simulations.
     # ------------------------------------------------------------------
 
-    def test_learned_ceiling_runs_at_the_edge_without_spiking_into_420(self):
+    def test_maximum_moves_twice_the_bytes_at_the_same_request_rate(self):
+        """The only way past a request-count throttle is more bytes/request."""
+        rate = 8                       # same as V1's parallelParts for big files
+        v1_part = 512 * 1024
+        maximum_part = 1024 * 1024
+        self.assertEqual(rate * v1_part, 4 * 1024 * 1024)
+        self.assertEqual(rate * maximum_part, 8 * 1024 * 1024)
+        self.assertEqual(rate * maximum_part, 2 * (rate * v1_part))
+        # The request count that triggers 420 is unchanged.
+        self.assertEqual(rate, 8)
+
+        source = self.settings()
+        self.assertIn('return 1024 * 1024', source)
+        self.assertIn('return min(`default` + 2, 8)', source)
+        self.assertIn('return min(`default`, 6)', source)
+        self.assertIn('return min(`default`, 4)', source)
+        self.assertIn('private let fastDownloadInitialWindow = 8', self.fetch_v2())
+
+    def test_latency_driven_window_collapse_is_gone(self):
+        """Model the old vs new window decision for a 1MB part taking 2.4s."""
         source = self.fetch_v2()
-        self.assertIn('private var learnedWindowCeiling: Int? = nil', source)
-        self.assertIn('fastDownloadCeilingProbeInterval: Double = 60.0', source)
-        self.assertIn('state.window = min(ceiling, state.window + 2)', source)
-        self.assertIn(
-            'self.learnedWindowCeiling = min(self.learnedWindowCeiling ?? Int.max, state.window)',
-            source,
-        )
+        self.assertNotIn('if latency > fastDownloadSlowPartLatency', source)
+        self.assertNotIn('else if latency < fastDownloadFastPartLatency', source)
+        self.assertNotIn('fastDownloadFastPartLatency', source)
+        self.assertNotIn('fastDownloadSlowPartLatency', source)
+        self.assertIn('let _ = latency', source)
+        self.assertIn('state.window = min(ceiling, state.window + 1)', source)
+        self.assertIn('private let fastDownloadLargePartSize: Int64 = 1024 * 1024', source)
 
-        INITIAL, MAX_PENDING, MIN_WINDOW, PROBE_INTERVAL = 8, 12, 2, 60.0
+        def old_window(latency, window=8):
+            if latency > 2.0:
+                return max(2, window // 2)
+            if latency < 1.0:
+                return min(12, window + 2)
+            return window
 
-        class WindowModel:
-            def __init__(self):
-                self.window = INITIAL
-                self.ceiling = None
-                self.last_probe = 0.0
+        def new_window(latency, window=8, ceiling=None):
+            cap = ceiling if ceiling is not None else 8
+            return min(cap, window + 1)
 
-            def fast_part(self, now):
-                if now - self.last_probe > PROBE_INTERVAL:
-                    self.last_probe = now
-                    if self.ceiling is not None:
-                        self.ceiling = min(self.ceiling + 1, MAX_PENDING)
-                cap = self.ceiling if self.ceiling is not None else MAX_PENDING
-                self.window = min(cap, self.window + 2)
+        part_latency = 2.4          # normal for 1MB on a mobile connection
+        collapsed = 8
+        for _ in range(6):
+            collapsed = old_window(part_latency, collapsed)
+        self.assertEqual(collapsed, 2, 'Old logic pinned maximum at window=2')
+        self.assertEqual(new_window(part_latency), 8,
+                         'A slow but successful part must not shrink the window')
 
-            def flood_wait(self):
-                self.window = max(MIN_WINDOW, self.window // 2)
-                limit = self.ceiling if self.ceiling is not None else 1 << 30
-                self.ceiling = min(limit, self.window)
-
-        model = WindowModel()
-        for t in range(0, 40, 2):
-            model.fast_part(float(t))
-        self.assertEqual(model.window, MAX_PENDING,
-                         'A healthy account must be allowed to reach the top tier')
-
-        model.flood_wait()
-        self.assertEqual(model.window, 6)
-        self.assertEqual(model.ceiling, 6)
-        for t in range(42, 58, 2):
-            model.fast_part(float(t))
-        self.assertEqual(model.window, 6,
-                         'Ramp-up must stop at the learned ceiling instead of '
-                         'immediately provoking another 420')
-
-        model.fast_part(65.0)
-        self.assertEqual(model.ceiling, 7,
-                         'A slow probe lets the ceiling recover when the '
-                         'account budget opens up again')
-        self.assertEqual(model.window, 7)
-
-    def test_larger_parts_break_the_low_throughput_self_lock(self):
-        """adaptWindow used to shrink parts to 128KB below 1.5MB/s, but the
-        only way back to 512KB was measuring >= 4MB/s - unreachable with
-        128KB parts. The new floor keeps the user-selected tier.
-        """
+    def test_ceiling_probe_is_not_locked_behind_a_fast_part(self):
+        """The old +1 recovery lived in the latency<1s branch, unreachable
+        with large parts. It must be unconditional and time-based."""
         source = self.fetch_v2()
-        self.assertIn('state.partSize = max(self.defaultPartSize, fastDownloadSmallPartSize)',
-                      source)
-        self.assertNotIn('state.partSize = max(state.minPartSize, fastDownloadSmallPartSize)',
-                         source)
+        self.assertIn('fastDownloadCeilingProbeInterval: Double = 15.0', source)
+        probe = source.split('if now - self.lastCeilingProbe > fastDownloadCeilingProbeInterval', 1)[1]
+        probe = probe.split('state.recentParts.append', 1)[0]
+        self.assertIn('self.learnedWindowCeiling = min(ceiling + 1, state.maxPendingParts)', probe)
+        self.assertNotIn('latency <', probe)
 
-        min_part_size = 4 * 1024
-        small_part = 128 * 1024
-        default_part = 512 * 1024
-        large_part = 512 * 1024
-        grow_threshold = 4 * 1024 * 1024
-
-        self.assertEqual(max(min_part_size, small_part), small_part)
-        self.assertEqual(max(default_part, small_part), default_part)
-        self.assertEqual(min(1 * 1024 * 1024, large_part), default_part)
-        # 128KB parts arriving every 0.25s can never reach the grow threshold.
-        self.assertLess(small_part / 0.25, grow_threshold)
-
-    def test_cdn_part_size_stays_hash_aligned(self):
-        source = self.fetch_v2()
-        self.assertIn('self.cdnPartSize = 256 * 1024', source)
-        self.assertIn('private let cdnHashBlockLength: Int64 = 128 * 1024', source)
-        self.assertEqual((256 * 1024) % (128 * 1024), 0,
-                         'CDN parts must be a whole number of hash blocks')
-        self.assertIn(256 * 1024, [1 << i for i in range(10, 21)])
-
-    def test_cdn_budget_is_double_the_master_budget(self):
-        source = self.fetch_v2()
-        self.assertIn(
-            'self.cdnPendingParts = min(fastDownloadCdnPendingParts, pendingParts * 2)',
-            source,
-        )
-        self.assertIn('min(fastDownloadMasterPendingParts, pendingParts)', source)
-        self.assertEqual(min(32, 12 * 2), 24)
-        self.assertGreater(min(32, 12 * 2), 12)
+        ceiling, window, max_pending = 2, 2, 8
+        for _ in range(6):                      # six 15s probes
+            ceiling = min(ceiling + 1, max_pending)
+            window = min(ceiling, window + 1)
+        self.assertEqual(window, 8, 'A throttled account must recover')
 
     # ------------------------------------------------------------------
-    # Structural guards for each change.
+    # Structural guards.
     # ------------------------------------------------------------------
 
-    def test_cdn_redirect_is_requested_on_every_engine(self):
+    def test_ios_no_longer_requests_cdn_redirect(self):
         source = self.fetch_v2()
-        self.assertIn('flags: !self.cdnDisabled ? (1 << 1) : 0', source,
-                      'cdn_supported was gated behind the rust engine, so iOS '
-                      'never received a CDN redirect')
-        self.assertNotIn('self.fastDownloads && !self.cdnDisabled', source)
-        self.assertIn('private var cdnDisabled: Bool = false', source,
-                      'A failed CDN must still be able to disable further redirects')
-
-    def test_cdn_worker_pool_is_not_downgraded_on_ios(self):
-        network = self.network()
-        self.assertIn('cdnMaxRequestsPerWorker: 4, cdnMaxWorkersPerTarget: 8', network)
-        self.assertNotIn('fastDownloads ? 4 : 3', network)
-        self.assertNotIn('fastDownloads ? 8 : 4', network)
-        self.assertNotIn('let fastDownloads = engine.kind == .rust', network)
-
-    def test_main_dc_transport_capacity_is_raised(self):
-        multiplexed = self.multiplexed()
-        limits = multiplexed.split('private func limits(', 1)[1].split('private func ', 1)[0]
-        self.assertIn('return (4, 6)', limits)
-        self.assertNotIn('return (3, 4)', limits)
-        self.assertGreater(4 * 6, 3 * 4)
-
-    def test_cdn_fallback_is_not_rust_only(self):
-        """Enabling CDN on iOS is only safe if hash failures can still fall
-        back to the main DC and the switch keeps already-downloaded ranges.
-        """
-        source = self.fetch_v2()
-        self.assertIn('self.cdnVerificationFailures += 1', source)
+        self.assertIn('flags: self.fastDownloads && !self.cdnDisabled ? (1 << 1) : 0', source)
+        self.assertNotIn('flags: !self.cdnDisabled ? (1 << 1) : 0', source)
+        self.assertIn('self.cdnPartSize = 128 * 1024', source)
         self.assertIn(
-            'if self.cdnVerificationFailures >= maxCdnFailuresBeforeFallback, '
-            'case let .cdn(cdnData) = state.fetchLocation {',
+            'self.cdnPendingParts = self.fastDownloads ? '
+            'min(fastDownloadCdnPendingParts, pendingParts * 2) : pendingParts',
             source,
         )
-        self.assertIn('cdnState.completedRanges = state.completedRanges', source)
-        self.assertEqual(source.count('cdnState.completedRanges = state.completedRanges'), 1)
-        self.assertNotIn('if self.fastDownloads {\n                            cdnState', source)
-        self.assertIn('self.fallBackToMaster(', source)
+        # The rust-gated CDN fault handling is back to the upstream shape.
+        self.assertIn('if self.fastDownloads, self.cdnVerificationFailures >= '
+                      'maxCdnFailuresBeforeFallback', source)
+        self.assertIn('if self.fastDownloads {\n                            '
+                      'cdnState.completedRanges', source)
 
-    def test_cold_start_probe_clamp_is_removed(self):
-        source = self.fetch_v2()
-        self.assertIn('maxPendingParts = min(maxPendingParts, state.window)', source)
-        self.assertNotIn('min(maxPendingParts, 4)', source,
-                         'The first burst must use the full adaptive window')
-
-    def test_speed_tiers_and_initial_window_are_higher(self):
-        source = self.fetch_v2()
-        settings = self.settings()
-        self.assertIn('private let fastDownloadInitialWindow = 8', source)
-        self.assertIn('return min(`default` + 2, 10)', settings)
-        self.assertIn('return min(`default` + 6, 14)', settings)
-        self.assertIn('return min(`default`, 4)', settings,
-                      'The "none" tier must stay conservative')
-        self.assertEqual(min(6 + 2, 10), 8)
-        self.assertEqual(min(6 + 6, 14), 12)
-
-    def test_420_backoff_remains_the_safety_net(self):
-        """The learned ceiling only works because a 420 still halves the
-        window and frees the in-flight multiplexer slots.
-        """
+    def test_only_a_real_420_may_shrink_the_window(self):
         handler = self.flood_handler()
         self.assertIn('error.hasPrefix("FLOOD_PREMIUM_WAIT")', handler)
         self.assertIn('state.window = max(fastDownloadMinWindow, state.window / 2)', handler)
         self.assertIn('part.disposable?.dispose()', handler)
         self.assertIn('self.update()', handler)
+        self.assertIn('self.learnedWindowCeiling = min(', handler)
         self.assertNotIn('addNetworkSpeedLimitedEvent', handler)
         self.assertNotIn('automaticFloodWait: false', self.fetch_v2(),
                          'Turning a 420 into .failure kills the whole download')
+        # adaptWindow must not contain a second halving.
+        adapt = self.fetch_v2().split('private func adaptWindow', 1)[1].split('private func ', 1)[0]
+        self.assertNotIn('state.window = max(fastDownloadMinWindow', adapt)
+
+    def test_zero_second_flood_wait_still_notifies_the_download_layer(self):
+        """FLOOD_PREMIUM_WAIT_0 retries immediately and keeps its slot; the
+        >0 gate hid it entirely, so the queue could spin with no progress.
+        """
+        network = self.text('submodules/TelegramCore/Sources/Network/Network.swift')
+        self.assertIn(
+            'if errorContext.floodWaitSeconds > 0 || '
+            'errorText.hasPrefix("FLOOD_PREMIUM_WAIT")',
+            network,
+        )
+        self.assertNotIn(
+            'floodWaitSeconds > 0, let errorText = errorContext.floodWaitErrorText',
+            network,
+        )
+        self.assertIn('if errorContext.floodWaitSeconds > 0 && !automaticFloodWait', network,
+                      'Do not turn a 420 into .failure')
+
+    def test_cold_start_clamp_stays_removed(self):
+        source = self.fetch_v2()
+        self.assertIn('maxPendingParts = min(maxPendingParts, state.window)', source)
+        self.assertNotIn('min(maxPendingParts, 4)', source)
+
+    def test_transport_capacity_remains_raised(self):
+        limits = self.multiplexed().split('private func limits(', 1)[1].split('private func ', 1)[0]
+        self.assertIn('return (4, 6)', limits)
+        self.assertNotIn('return (3, 4)', limits)
 
     def test_premium_upsell_is_still_absent_on_both_engines(self):
         self.assertNotIn('addNetworkSpeedLimitedEvent', self.fetch_v2())

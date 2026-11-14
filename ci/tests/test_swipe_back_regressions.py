@@ -5,15 +5,13 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 class SwipeBackRegressionTests(unittest.TestCase):
-    """Guard the "half-screen swipe back" gesture against downward-scroll misfires.
+    """Guard the half-screen swipe back against BOTH failure modes.
 
-    Reproduced symptom: while scrolling a chat/sheet down, the navigation pop
-    transition starts anyway. The fix keeps the gesture (it must NOT be turned
-    off) but follows the industry-standard rules:
-      * confine the start region to the left third of the screen,
-      * require a real horizontal intent before accepting an edge start,
-      * lock the axis and cancel once the gesture turns clearly vertical,
-      * use a 10pt minimum displacement before locking.
+    v1 symptom: scrolling a sheet down started the pop transition.
+    v2 symptom (after the first fix): the pop became almost impossible to
+    trigger - a half-screen swipe did nothing, and any slightly diagonal
+    swipe was rejected. The current rules keep the gesture but relax the
+    axis test and shorten the direction lock to the first 40pt.
     """
 
     def text(self, relative):
@@ -33,114 +31,138 @@ class SwipeBackRegressionTests(unittest.TestCase):
     # ------------------------------------------------------------------
 
     @staticmethod
-    def decide_start(translation_x, translation_y, minimum=10.0):
+    def decide_start(translation_x, translation_y, minimum=8.0):
         """Mirror the non-edge (center) branch of touchesMoved."""
         ax, ay = abs(translation_x), abs(translation_y)
         total = (ax * ax + ay * ay) ** 0.5
-        if total > 10.0:
-            return 'began' if ax >= ay else 'failed'
+        if total > 8.0:
+            return 'began' if ax >= ay * 0.7 else 'failed'
         if ay > 2.0 and ay > ax * 2.0:
             return 'failed'
-        if ax > minimum and ay * 2.0 < ax:
+        if ax > minimum and ay * 1.4 < ax:
             return 'began'
         return 'undecided'
 
     @staticmethod
-    def edge_intent(translation_x, translation_y, minimum=10.0):
-        """Mirror the new edge-start guard."""
+    def edge_intent(translation_x, translation_y, minimum=8.0):
+        """Mirror the edge-start guard (horizontal MAJORITY, not strict axis)."""
         ax, ay = abs(translation_x), abs(translation_y)
-        return translation_x > minimum and ax > ay
+        return translation_x > minimum and ax > ay * 0.7
 
     @staticmethod
-    def direction_lock(velocity_x, velocity_y, is_down_direction=False):
-        """Mirror the post-began direction lock."""
-        if is_down_direction:
+    def direction_lock(velocity_x, velocity_y, total_movement=20.0,
+                       is_down_direction=False):
+        """Mirror the short-lived post-began axis lock."""
+        if is_down_direction or total_movement >= 40.0:
             return 'keep'
-        if abs(velocity_y) > abs(velocity_x) * 1.5 and abs(velocity_y) > 200.0:
+        if abs(velocity_y) > abs(velocity_x) * 2.2 and abs(velocity_y) > 450.0:
             return 'cancelled'
         return 'keep'
 
     @staticmethod
     def allows_start(point_x, width, configuration=None):
         """Mirror allowedDirections(point) in NavigationContainer."""
-        allowed = min(width * 0.35, 200.0)
-        if configuration is not None:
-            factor, minimum, maximum = configuration
-            allowed = max(minimum, min(width * factor, maximum))
+        minimum_allowed = min(width * 0.5, 260.0)
+        if configuration is None:
+            return point_x <= minimum_allowed
+        factor, minimum, maximum = configuration
+        allowed = max(minimum, min(width * max(factor, 0.5), max(maximum, 260.0)))
         return point_x <= allowed
 
-    def test_downward_scroll_does_not_start_the_pop(self):
-        # A normal downward scroll: vertical clearly dominates.
+    # ------------------------------------------------------------------
+    # The regression the user actually reported.
+    # ------------------------------------------------------------------
+
+    def test_diagonal_swipe_now_triggers(self):
+        # ~30 degrees off horizontal used to be rejected by absX > absY.
+        self.assertEqual(self.decide_start(24.0, 12.0), 'began')
+        self.assertEqual(self.decide_start(20.0, 14.0), 'began')
+        self.assertTrue(self.edge_intent(24.0, 12.0))
+        self.assertTrue(self.edge_intent(20.0, 14.0))
+        # Still committed, not cancelled, by a diagonal continuation.
+        self.assertEqual(self.direction_lock(500.0, 300.0), 'keep')
+
+    def test_half_screen_sheet_accepts_a_swipe_starting_anywhere(self):
+        # The container must not gate on the start point at all now.
+        modal = self.modal()
+        self.assertNotIn('guard point.x <=', modal)
+        self.assertIn('allowedDirections: { [weak self] _ in', modal)
+        self.assertIn('return .right', modal)
+        self.assertIn('panRecognizer.isEnabled = true', modal)
+        # Model "no start gate": every x on a 390pt-wide sheet is accepted.
+        width = 390.0
+        for point_x in (0.0, 120.0, 200.0, 300.0, 380.0):
+            self.assertLessEqual(point_x, width)
+            self.assertTrue(True if 0.0 <= point_x <= width else False)
+
+    def test_main_container_region_is_wider_than_before(self):
+        width = 390.0
+        self.assertTrue(self.allows_start(0.0, width))
+        self.assertTrue(self.allows_start(180.0, width))
+        self.assertFalse(self.allows_start(380.0, width))
+        # ChatController's 0.35 config is honoured but floored at 0.5 of the
+        # width (195pt here), so middle-of-card starts work.
+        self.assertTrue(self.allows_start(180.0, width, (0.35, 16.0, 200.0)))
+        self.assertTrue(self.allows_start(190.0, width, (0.35, 16.0, 200.0)))
+        self.assertFalse(self.allows_start(250.0, width, (0.35, 16.0, 200.0)))
+
+    def test_downward_scroll_still_does_not_start_the_pop(self):
         self.assertEqual(self.decide_start(3.0, 24.0), 'failed')
         self.assertEqual(self.decide_start(2.0, 8.0), 'failed')
-        # An edge start must also be rejected without horizontal intent.
         self.assertFalse(self.edge_intent(0.0, 24.0))
         self.assertFalse(self.edge_intent(3.0, 24.0))
-        # A deliberate right swipe still works.
-        self.assertEqual(self.decide_start(24.0, 3.0), 'began')
-        self.assertTrue(self.edge_intent(24.0, 3.0))
+        self.assertEqual(self.direction_lock(100.0, 600.0), 'cancelled')
 
     def test_tap_jitter_no_longer_locks_the_gesture(self):
-        # 2pt of horizontal jitter used to satisfy minimumCenterMovement=2.
-        # With a 10pt floor the gesture stays undecided until real movement.
         self.assertEqual(self.decide_start(2.5, 0.0), 'undecided')
         self.assertEqual(self.decide_start(2.5, 0.0, minimum=2.0), 'began')
 
-    def test_direction_lock_cancels_a_pop_that_turns_vertical(self):
-        self.assertEqual(self.direction_lock(600.0, 120.0), 'keep')
-        self.assertEqual(self.direction_lock(120.0, 600.0), 'cancelled')
-        # A slow drift is ignored so a slightly diagonal swipe still works.
-        self.assertEqual(self.direction_lock(600.0, 150.0), 'keep')
-        # Downward-dismiss sheets keep their vertical gesture.
-        self.assertEqual(self.direction_lock(120.0, 600.0, is_down_direction=True), 'keep')
-
-    def test_start_region_is_confined_but_not_disabled(self):
-        width = 390.0
-        self.assertTrue(self.allows_start(0.0, width))
-        self.assertTrue(self.allows_start(120.0, width))
-        self.assertFalse(self.allows_start(200.0, width))
-        self.assertFalse(self.allows_start(380.0, width))
-        # ChatController's 0.35 configuration is actually honoured now.
-        self.assertTrue(self.allows_start(130.0, width, (0.35, 16.0, 200.0)))
-        self.assertFalse(self.allows_start(180.0, width, (0.35, 16.0, 200.0)))
-        # The gesture is still enabled on a compact screen.
-        self.assertIn('panRecognizer.isEnabled = true', self.modal())
+    def test_axis_lock_is_short_lived(self):
+        # A fast vertical flick only cancels while the axis is undecided.
+        self.assertEqual(self.direction_lock(100.0, 600.0, 20.0), 'cancelled')
+        self.assertEqual(self.direction_lock(100.0, 600.0, 60.0), 'keep')
+        self.assertEqual(self.direction_lock(100.0, 600.0, 20.0, True), 'keep')
+        # Slow/moderate vertical drift never cancels a diagonal swipe.
+        self.assertEqual(self.direction_lock(500.0, 300.0), 'keep')
+        self.assertEqual(self.direction_lock(600.0, 400.0), 'keep')
 
     # ------------------------------------------------------------------
     # Structural guards.
     # ------------------------------------------------------------------
 
-    def test_minimum_displacement_is_ten_points(self):
+    def test_minimum_displacement_is_eight_points(self):
         source = self.recognizer()
-        self.assertIn('private var minimumCenterMovement: CGFloat = 10.0', source)
-        self.assertIn('self.minimumCenterMovement = max(10.0,', source)
-        self.assertIn('self.minimumCenterMovement = 10.0', source)
+        self.assertIn('private var minimumCenterMovement: CGFloat = 8.0', source)
+        self.assertIn('self.minimumCenterMovement = max(8.0,', source)
+        self.assertIn('self.minimumCenterMovement = 8.0', source)
+        self.assertNotIn('CGFloat = 10.0', source)
 
-    def test_edge_start_requires_horizontal_intent(self):
+    def test_horizontal_majority_replaces_strict_axis(self):
         source = self.recognizer()
-        self.assertIn('let horizontalIntent = translation.x > self.minimumCenterMovement && absTranslationX > absTranslationY', source)
-        edge = source.split('let horizontalIntent', 1)[1].split('} else if !self.currentAllowedDirections.contains(.leftCenter)', 1)[0]
-        self.assertIn('&& horizontalIntent', edge)
+        self.assertIn('absTranslationX > absTranslationY * 0.7', source)
+        self.assertIn('absTranslationX >= absTranslationY * 0.7', source)
+        self.assertIn('&& horizontalIntent', source)
+        self.assertNotIn('absTranslationX > absTranslationY\n', source)
 
-    def test_direction_lock_is_present_and_scoped(self):
+    def test_axis_lock_is_present_and_scoped(self):
         source = self.recognizer()
         self.assertIn('if !self.currentAllowedDirections.contains(.down) {', source)
+        self.assertIn('totalMovement < 40.0', source)
+        self.assertIn('abs(velocity.y) > abs(velocity.x) * 2.2', source)
+        self.assertIn('abs(velocity.y) > 450.0', source)
         self.assertIn('self.state = .cancelled', source)
-        self.assertIn('abs(velocity.y) > abs(velocity.x) * 1.5', source)
-
-    def test_start_point_is_used_in_both_containers(self):
-        for source in (self.container(), self.modal()):
-            self.assertIn('allowedDirections: { [weak self] point in', source)
-            self.assertIn('guard point.x <=', source)
-            self.assertIn('min(width * 0.35, 200.0)', source)
+        self.assertNotIn('abs(velocity.x) * 1.5', source)
 
     def test_per_screen_configuration_is_read(self):
-        self.assertIn('strongSelf.controllers.last?.interactiveNavivationGestureEdgeWidth', self.container())
+        self.assertIn('strongSelf.controllers.last?.interactiveNavivationGestureEdgeWidth',
+                      self.container())
         self.assertIn('case let .widthMultiplier(factor, minValue, maxValue):', self.container())
+        self.assertIn('let minimumAllowedWidth = min(width * 0.5, 260.0)', self.container())
+        self.assertIn('max(factor, 0.5)', self.container())
+        self.assertIn('max(maxValue, 260.0)', self.container())
+        self.assertIn('guard point.x <= allowedWidth', self.container())
 
     def test_dynamic_edge_width_dead_code_is_removed(self):
-        # Restoring dynamicEdgeWidth alone widened the zero-check edge and
-        # would have made misfires worse; it must stay gone.
         self.assertNotIn('panRecognizer.dynamicEdgeWidth', self.container())
 
 

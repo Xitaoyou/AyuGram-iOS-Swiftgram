@@ -84,8 +84,9 @@ public class InteractiveTransitionGestureRecognizer: UIPanGestureRecognizer {
     
     private var validatedGesture = false
     // AYG: 2pt locked the gesture on a finger's horizontal jitter while
-    // tapping, so a subsequent downward scroll kept driving the pop.
-    private var minimumCenterMovement: CGFloat = 10.0
+    // tapping. 10pt proved too stiff to start a pop on a half-screen sheet;
+    // 8pt is the usual lower bound for an intentional pan.
+    private var minimumCenterMovement: CGFloat = 8.0
     private var firstLocation: CGPoint = CGPoint()
     public private(set) var currentAllowedDirections: InteractiveTransitionGestureRecognizerDirections = []
     /// The view whose restrictions (horizontal gestures, `disablesInteractiveTransitionGestureRecognizer…`) apply at a
@@ -106,7 +107,7 @@ public class InteractiveTransitionGestureRecognizer: UIPanGestureRecognizer {
         super.reset()
         
         self.validatedGesture = false
-        self.minimumCenterMovement = 10.0
+        self.minimumCenterMovement = 8.0
         self.currentAllowedDirections = []
     }
 
@@ -129,7 +130,7 @@ public class InteractiveTransitionGestureRecognizer: UIPanGestureRecognizer {
         self.firstLocation = point
         
         if let target = self.gestureRestrictionsHitTest?(self.firstLocation, event) ?? self.view?.hitTest(self.firstLocation, with: event) {
-            self.minimumCenterMovement = max(10.0, interactiveTransitionMinimumMovement(target) ?? 10.0)
+            self.minimumCenterMovement = max(8.0, interactiveTransitionMinimumMovement(target) ?? 8.0)
             let horizontalGestures = hasHorizontalGestures(target, point: self.view?.convert(self.firstLocation, to: target))
             switch horizontalGestures {
             case .some, .strict:
@@ -202,12 +203,13 @@ public class InteractiveTransitionGestureRecognizer: UIPanGestureRecognizer {
                     return
                 }
                 
-                // AYG: the stock code accepted any edge start with zero
-                // direction/velocity checks, so a downward scroll beginning
-                // near the left edge immediately started the pop transition.
-                // Require an explicit horizontal intent first.
-                let horizontalIntent = translation.x > self.minimumCenterMovement && absTranslationX > absTranslationY
-                let leftwardIntent = translation.x < -self.minimumCenterMovement && absTranslationX > absTranslationY
+                // AYG: require a horizontal MAJORITY, not a strictly
+                // horizontal vector. A natural thumb swipe on a half-screen
+                // sheet is diagonal; absX > absY rejected anything past 45deg.
+                // A clearly vertical flick is still caught by the axis lock
+                // below, so this only needs to reject a vertical majority.
+                let horizontalIntent = translation.x > self.minimumCenterMovement && absTranslationX > absTranslationY * 0.7
+                let leftwardIntent = translation.x < -self.minimumCenterMovement && absTranslationX > absTranslationY * 0.7
                 if self.currentAllowedDirections.contains(.rightEdge) && self.firstLocation.x < edgeWidth && horizontalIntent {
                     self.validatedGesture = true
                 } else if self.currentAllowedDirections.contains(.leftEdge) && self.firstLocation.x > size.width - edgeWidth && leftwardIntent {
@@ -218,9 +220,10 @@ public class InteractiveTransitionGestureRecognizer: UIPanGestureRecognizer {
                     self.state = .failed
                 } else {
                     let totalMovement = sqrt(absTranslationX * absTranslationX + absTranslationY * absTranslationY)
-                    if totalMovement > 10.0 {
-                        // Force dominant direction after 10pt movement
-                        if absTranslationX >= absTranslationY {
+                    if totalMovement > 8.0 {
+                        // AYG: same relaxed majority as the edge path. A
+                        // diagonal swipe must still commit to the pop.
+                        if absTranslationX >= absTranslationY * 0.7 {
                             self.validatedGesture = true
                             fireBegan = true
                         } else {
@@ -228,7 +231,7 @@ public class InteractiveTransitionGestureRecognizer: UIPanGestureRecognizer {
                         }
                     } else if absTranslationY > 2.0 && absTranslationY > absTranslationX * 2.0 {
                         self.state = .failed
-                    } else if absTranslationX > self.minimumCenterMovement && absTranslationY * 2.0 < absTranslationX {
+                    } else if absTranslationX > self.minimumCenterMovement && absTranslationY * 1.4 < absTranslationX {
                         self.validatedGesture = true
                         fireBegan = true
                     }
@@ -237,14 +240,20 @@ public class InteractiveTransitionGestureRecognizer: UIPanGestureRecognizer {
         }
         
         if self.validatedGesture {
-            // AYG: industry-standard direction lock. Once a horizontal pop
-            // has begun, a clearly vertical continuation (e.g. scrolling the
-            // chat down) must cancel it instead of driving the transition.
+            // AYG: axis lock only while the gesture is still being decided.
+            // After 40pt the pop is committed and a diagonal continuation
+            // must NOT cancel it - the previous lock ran on every move and
+            // killed almost any slightly angled swipe. Thresholds are loose
+            // on purpose: only a fast, clearly vertical flick fails (the
+            // original "scrolling down starts a pop" symptom).
             if !self.currentAllowedDirections.contains(.down) {
-                let velocity = self.velocity(in: self.view)
-                if abs(velocity.y) > abs(velocity.x) * 1.5, abs(velocity.y) > 200.0 {
-                    self.state = .cancelled
-                    return
+                let totalMovement = sqrt(absTranslationX * absTranslationX + absTranslationY * absTranslationY)
+                if totalMovement < 40.0 {
+                    let velocity = self.velocity(in: self.view)
+                    if abs(velocity.y) > abs(velocity.x) * 2.2, abs(velocity.y) > 450.0 {
+                        self.state = .cancelled
+                        return
+                    }
                 }
             }
             super.touchesMoved(touches, with: event)

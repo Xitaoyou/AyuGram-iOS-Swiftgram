@@ -200,20 +200,22 @@ public final class NavigationContainer: ASDisplayNode, ASGestureRecognizerDelega
             }
             // AYG: the stock closure ignored the start point and returned
             // .right for the whole screen. Honour the screen's own edge-width
-            // configuration (ChatController asks for 35% of the width), with
-            // a compact-screen default of the left 35% capped at 200pt.
+            // configuration, but 35% / 200pt proved too narrow to hit in
+            // normal use. Keep the per-screen value as a lower bound and
+            // never confine the pop to less than half the width / 260pt.
             // Returning [] makes touchesBegan fail the gesture cleanly.
             let width = max(1.0, strongSelf.view.bounds.width)
+            let minimumAllowedWidth = min(width * 0.5, 260.0)
             let allowedWidth: CGFloat
             if let configuration = strongSelf.controllers.last?.interactiveNavivationGestureEdgeWidth {
                 switch configuration {
                 case let .constant(value):
-                    allowedWidth = value
+                    allowedWidth = max(value, minimumAllowedWidth)
                 case let .widthMultiplier(factor, minValue, maxValue):
-                    allowedWidth = max(minValue, min(width * factor, maxValue))
+                    allowedWidth = max(minValue, min(width * max(factor, 0.5), max(maxValue, 260.0)))
                 }
             } else {
-                allowedWidth = min(width * 0.35, 200.0)
+                allowedWidth = minimumAllowedWidth
             }
             guard point.x <= allowedWidth else {
                 return []

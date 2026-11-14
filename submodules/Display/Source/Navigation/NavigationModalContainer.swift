@@ -109,17 +109,15 @@ final class NavigationModalContainer: ASDisplayNode, ASScrollViewDelegate, ASGes
         self.scrollNode.view.tag = 0x5C4011
         self.scrollNode.view.scrollsToTop = false
         
-        let panRecognizer = InteractiveTransitionGestureRecognizer(target: self, action: #selector(self.panGesture(_:)), allowedDirections: { [weak self] point in
+        let panRecognizer = InteractiveTransitionGestureRecognizer(target: self, action: #selector(self.panGesture(_:)), allowedDirections: { [weak self] _ in
             guard let strongSelf = self, !strongSelf.isDismissed else {
                 return []
             }
-            // AYG: half-screen sheets used to accept a back swipe starting
-            // anywhere, which collided with downward scrolling. Keep the
-            // gesture but confine it to the left third of the sheet.
-            let width = max(1.0, strongSelf.view.bounds.width)
-            guard point.x <= min(width * 0.35, 200.0) else {
-                return []
-            }
+            // AYG: confining a half-screen sheet to its left 35% made the pop
+            // effectively unreachable - most swipes start in the middle or
+            // right of the card. Accept a swipe anywhere and let the
+            // recognizer's horizontal-majority check plus its short-lived
+            // axis lock distinguish it from a downward scroll.
             return .right
         })
         if #available(iOS 13.4, *) {
