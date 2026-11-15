@@ -29,8 +29,6 @@ def main():
     disposables = (ROOT / 'submodules/SSignalKit/SwiftSignalKit/Source/Disposable.swift').read_text(encoding='utf-8')
     with tempfile.TemporaryDirectory() as directory:
         output = Path(directory)
-        platform = subprocess.check_output(['xcrun', '--sdk', 'macosx', '--show-sdk-platform-path'], text=True).strip()
-        frameworks = str(Path(platform) / 'Developer/Library/Frameworks')
         subprocess.run([
             'swiftc', '-swift-version', '5', '-emit-module', '-emit-library',
             '-module-name', 'RangeSet',
@@ -50,19 +48,22 @@ def main():
         suites = []
         for name in ['DownloadRequestBudgetTests', 'FetchV2PrioritySelectionTests']:
             source = (ROOT / f'submodules/TelegramCore/Tests/{name}.swift').read_text(encoding='utf-8')
-            source = source.replace('@testable import TelegramCore', '')
+            source = source.replace('@testable import TelegramCore', '').replace('import XCTest', '').replace(': XCTestCase', '')
             destination = output / f'{name}.swift'
             destination.write_text(source, encoding='utf-8')
             sources.append(str(destination))
             methods = re.findall(r'    func (test\w+)\(', source)
-            suites.append('testCase([' + ', '.join(f'("{method}", {name}.{method})' for method in methods) + '])')
+            suites.extend(f'{name}().{method}()' for method in methods)
         runner = output / 'main.swift'
-        runner.write_text('''import XCTest
+        runner.write_text('''import Foundation
+func XCTAssertTrue(_ value: @autoclosure () -> Bool) { precondition(value()) }
+func XCTAssertFalse(_ value: @autoclosure () -> Bool) { precondition(!value()) }
+func XCTAssertEqual<T: Equatable>(_ a: @autoclosure () -> T, _ b: @autoclosure () -> T) { precondition(a() == b()) }
 final class Probe: Disposable {
     var cancelled = false
     func dispose() { self.cancelled = true }
 }
-final class PreviewHolderTests: XCTestCase {
+final class PreviewHolderTests {
     func testLeaveAndReturnKeepsHolderReusable() {
         let holder = MetaDisposable()
         let first = Probe()
@@ -79,14 +80,14 @@ final class PreviewHolderTests: XCTestCase {
         XCTAssertTrue(third.cancelled)
     }
 }
-XCTMain([''' + ', '.join(suites) + ''', testCase([
-    ("testLeaveAndReturnKeepsHolderReusable", PreviewHolderTests.testLeaveAndReturnKeepsHolderReusable)
-])])
+''' + '\n'.join(suites) + '''
+PreviewHolderTests().testLeaveAndReturnKeepsHolderReusable()
+print("Swift scheduling checks passed")
 ''', encoding='utf-8')
         binary = output / 'DownloadSchedulingTests'
         subprocess.run([
             'swiftc', '-swift-version', '5', '-warnings-as-errors',
-            '-I', str(output), '-L', str(output), '-lRangeSet', '-F', frameworks,
+            '-I', str(output), '-L', str(output), '-lRangeSet',
             '-Xlinker', '-rpath', '-Xlinker', str(output),
             *sources, str(runner), '-o', str(binary),
         ], check=True)
