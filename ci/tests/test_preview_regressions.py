@@ -90,7 +90,7 @@ class PreviewRegressionTests(unittest.TestCase):
         """
         fetch_v2 = self.text('submodules/TelegramCore/Sources/Network/FetchV2.swift')
         self.assertIn('func fetchV2PriorityRanges(', fetch_v2)
-        self.assertIn('result[item.priority].formUnion(', fetch_v2)
+        self.assertIn('result[priority].formUnion(', fetch_v2)
         self.assertIn('RequiredRange(value: $0.0, priority: $0.1)', fetch_v2)
         self.assertIn('priority: Int($0.priority.rawValue)', fetch_v2)
         self.assertIn('for priorityIndex in (0 ..< ranges.count).reversed()', fetch_v2)
@@ -203,11 +203,16 @@ class PreviewRegressionTests(unittest.TestCase):
         self.assertIn('ranges: [(0 ..< headLength, .maximum)]', gallery)
         self.assertIn('statsCategory: .video', gallery)
         self.assertIn('content.fileReference.resourceReference(file.resource)', gallery)
-        self.assertGreaterEqual(gallery.count('self.frameHeadDisposable.dispose()'), 2,
-                                'The head fetch must be released on deinit and '
-                                'when the item stops being central')
+        self.assertIn('self.frameHeadDisposable.dispose()', gallery,
+                      'The holder must be disposed on deinit')
         central = gallery.split('override func centralityUpdated', 1)[1]
-        self.assertIn('frameHeadDisposable', central)
+        inactive = central.split('if !isCentral {', 1)[1].split('}', 1)[0]
+        self.assertIn('self.fetchPriorityDisposable.set(nil)', inactive,
+                      'Offscreen videos must release their maximum network priority')
+        self.assertIn('self.frameHeadDisposable.set(nil)', central,
+                      'Leaving the item must cancel the fetch but allow re-entry')
+        self.assertNotIn('self.frameHeadDisposable.dispose()', central,
+                         'Disposing the holder permanently cancels future head fetches')
 
     def test_partial_range_downloads_keep_the_user_initiated_lane(self):
         source = self.fetch_manager()

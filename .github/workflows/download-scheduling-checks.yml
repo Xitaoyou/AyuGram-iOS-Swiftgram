@@ -1,0 +1,27 @@
+name: Download scheduling checks
+on:
+  pull_request:
+    paths:
+      - 'submodules/TelegramCore/**'
+      - 'submodules/GalleryUI/**'
+      - 'Swiftgram/SGSimpleSettings/**'
+      - 'ci/check_download_scheduling.py'
+      - 'ci/tests/**'
+      - '.github/workflows/download-scheduling-checks.yml'
+  push:
+    branches: ['codex/video-download-scheduling']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  scheduling:
+    runs-on: macos-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+      - name: Python regression checks
+        run: python3 -m unittest discover -s ci/tests -p 'test_*.py'
+      - name: Compile and execute production Swift scheduling tests
+        run: python3 ci/check_download_scheduling.py

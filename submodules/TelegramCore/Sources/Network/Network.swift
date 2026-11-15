@@ -1496,8 +1496,8 @@ public final class Network: NSObject {
 
 func networkRequestErrorPolicy(automaticFloodWait: Bool, onFloodWaitError: ((String) -> Void)?, failOnServerErrors: Bool) -> (NetworkEngineErrorContext) -> Bool {
     return { errorContext in
-        // AYG: FLOOD_PREMIUM_WAIT_0 has a zero-second wait but still means
-        // "too many in-flight requests". MtProtoKit retries such a request
+        // AYG: FLOOD_PREMIUM_WAIT_0 still signals server throttling.
+        // MtProtoKit retries such a request
         // immediately while keeping its multiplexer slot, and the >0 gate
         // meant the download layer never heard about it - the queue spun
         // with zero progress. Notify only for premium flood waits so other

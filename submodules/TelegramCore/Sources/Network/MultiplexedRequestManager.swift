@@ -24,6 +24,9 @@ private struct MultiplexedRequestTargetKey: Equatable, Hashable {
 }
 
 private final class RequestData {
+    var isMediaDownload: Bool {
+        return self.functionDescription.name == "upload.getFile" || self.functionDescription.name == "upload.getCdnFile"
+    }
     let id: Int32
     let consumerId: Int64
     let resourceId: String?
@@ -60,10 +63,12 @@ private final class RequestData {
 private final class ExecutingRequestData {
     let requestId: Int32
     let disposable: Disposable
+    let isMediaDownload: Bool
     
-    init(requestId: Int32, disposable: Disposable) {
+    init(requestId: Int32, disposable: Disposable, isMediaDownload: Bool) {
         self.requestId = requestId
         self.disposable = disposable
+        self.isMediaDownload = isMediaDownload
     }
 }
 
@@ -92,6 +97,50 @@ struct NetworkResponseInfo {
     var networkDuration: Double
 }
 
+// Shared by every file and both foreground/background pools in one account's
+// DC. The server does not specify whether it meters bytes, requests, or both.
+struct DownloadRequestBudget {
+    let capacity: Int
+    private(set) var limit: Int
+    private(set) var cooldownUntil: Double = 0
+    private var lastDecrease: Double = -.infinity
+    private var lastRecovery: Double = 0
+
+    init(capacity: Int) {
+        self.capacity = max(2, capacity)
+        self.limit = max(2, capacity)
+    }
+
+    func allows(active: Int, priority: Int, now: Double) -> Bool {
+        guard now >= self.cooldownUntil else { return false }
+        // Leave room for playback without cancelling bytes in flight.
+        let reserved = min(2, self.limit - 1)
+        return active < (priority >= 2 ? self.limit : self.limit - reserved)
+    }
+
+    mutating func recordFloodWait(_ error: String, active: Int, now: Double) -> Bool {
+        let prefix = "FLOOD_PREMIUM_WAIT_"
+        guard error.hasPrefix(prefix), let seconds = Double(error.dropFirst(prefix.count)), seconds.isFinite, seconds >= 0 else {
+            return false
+        }
+        self.cooldownUntil = max(self.cooldownUntil, now + max(1, seconds))
+        // Coalesce the callbacks from one burst instead of halving per part.
+        if now - self.lastDecrease >= 1 {
+            self.limit = max(2, min(self.limit, max(2, active)) / 2)
+            self.lastDecrease = now
+        }
+        self.lastRecovery = self.cooldownUntil
+        return true
+    }
+
+    mutating func recordSuccess(now: Double) {
+        if now >= self.cooldownUntil && now - self.lastRecovery >= 15 {
+            self.limit = min(self.capacity, self.limit + 1)
+            self.lastRecovery = now
+        }
+    }
+}
+
 private final class MultiplexedRequestManagerContext {
     final class RequestManagerPriorityContext {
         var resourceCounters: [String: Bag<Int>] = [:]
@@ -108,6 +157,8 @@ private final class MultiplexedRequestManagerContext {
     
     private var targetContexts: [MultiplexedRequestTargetKey: [RequestTargetContext]] = [:]
     private var emptyTargetDisposables: [MultiplexedRequestTargetTimerKey: Disposable] = [:]
+    private var downloadBudgets: [MultiplexedRequestTarget: DownloadRequestBudget] = [:]
+    private var budgetWakeups: [MultiplexedRequestTarget: MetaDisposable] = [:]
     
     init(queue: Queue, cdnMaxRequestsPerWorker: Int, cdnMaxWorkersPerTarget: Int, takeWorker: @escaping (MultiplexedRequestTarget, MediaResourceFetchTag?, Bool) -> Download?) {
         self.queue = queue
@@ -125,6 +176,9 @@ private final class MultiplexedRequestManagerContext {
             }
         }
         for disposable in emptyTargetDisposables.values {
+            disposable.dispose()
+        }
+        for disposable in self.budgetWakeups.values {
             disposable.dispose()
         }
     }
@@ -228,8 +282,31 @@ private final class MultiplexedRequestManagerContext {
                 }
             }
         }
+        if request.isMediaDownload {
+            self.downloadBudgets[request.target]?.recordSuccess(now: ProcessInfo.processInfo.systemUptime)
+        }
         request.completed(result, info)
         self.updateState()
+    }
+
+    private func activeRequests(to target: MultiplexedRequestTarget) -> Int {
+        return self.targetContexts.reduce(0) { count, entry in
+            count + (entry.key.target == target ? entry.value.reduce(0) { $0 + $1.requests.filter { $0.isMediaDownload }.count } : 0)
+        }
+    }
+
+    private func recordFloodWait(_ error: String, target: MultiplexedRequestTarget) {
+        let now = ProcessInfo.processInfo.systemUptime
+        let limits = self.limits(target)
+        var budget = self.downloadBudgets[target] ?? DownloadRequestBudget(capacity: limits.requestsPerWorker * limits.workersPerTarget)
+        guard budget.recordFloodWait(error, active: self.activeRequests(to: target), now: now) else { return }
+        self.downloadBudgets[target] = budget
+        let wakeup = self.budgetWakeups[target] ?? MetaDisposable()
+        self.budgetWakeups[target] = wakeup
+        wakeup.set((Signal<Never, NoError>.complete()
+        |> delay(budget.cooldownUntil - now, queue: self.queue)).start(completed: { [weak self] in
+            self?.updateState()
+        }))
     }
 
     private func isTargetSaturated(_ targetKey: MultiplexedRequestTargetKey) -> Bool {
@@ -274,7 +351,7 @@ private final class MultiplexedRequestManagerContext {
         }
         var saturatedTargets = Set<MultiplexedRequestTargetKey>()
         
-        for (_, request) in prioritizedRequests.sorted(by: { lhs, rhs in
+        for (priority, request) in prioritizedRequests.sorted(by: { lhs, rhs in
             if lhs.priority != rhs.priority {
                 return lhs.priority > rhs.priority
             }
@@ -286,6 +363,12 @@ private final class MultiplexedRequestManagerContext {
                 continue
             }
             let (maxRequestsPerWorker, maxWorkersPerTarget) = self.limits(request.target)
+            if self.downloadBudgets[request.target] == nil {
+                self.downloadBudgets[request.target] = DownloadRequestBudget(capacity: maxRequestsPerWorker * maxWorkersPerTarget)
+            }
+            if request.isMediaDownload && !self.downloadBudgets[request.target]!.allows(active: self.activeRequests(to: request.target), priority: priority, now: ProcessInfo.processInfo.systemUptime) {
+                continue
+            }
             
             if self.targetContexts[targetKey] == nil {
                 self.targetContexts[targetKey] = []
@@ -315,7 +398,7 @@ private final class MultiplexedRequestManagerContext {
             if let selectedContext = selectedContext {
                 let disposable = MetaDisposable()
                 let requestId = request.id
-                selectedContext.requests.append(ExecutingRequestData(requestId: requestId, disposable: disposable))
+                selectedContext.requests.append(ExecutingRequestData(requestId: requestId, disposable: disposable, isMediaDownload: request.isMediaDownload))
                 let queue = self.queue
                 #if DEBUG
                 // Only with a profile: without one, the request does no more than in a release build.
@@ -335,7 +418,14 @@ private final class MultiplexedRequestManagerContext {
                 #else
                 let deserializeResponse = request.deserializeResponse
                 #endif
-                disposable.set(selectedContext.worker.rawRequest((request.functionDescription, request.payload, deserializeResponse), automaticFloodWait: request.automaticFloodWait, onFloodWaitError: request.onFloodWaitError, expectedResponseSize: request.expectedResponseSize).start(next: { [weak self, weak selectedContext] result, info in
+                disposable.set(selectedContext.worker.rawRequest((request.functionDescription, request.payload, deserializeResponse), automaticFloodWait: request.automaticFloodWait, onFloodWaitError: { [weak self] error in
+                    queue.async {
+                        if request.isMediaDownload {
+                            self?.recordFloodWait(error, target: request.target)
+                        }
+                    }
+                    request.onFloodWaitError?(error)
+                }, expectedResponseSize: request.expectedResponseSize).start(next: { [weak self, weak selectedContext] result, info in
                     queue.async {
                         guard let strongSelf = self else {
                             return

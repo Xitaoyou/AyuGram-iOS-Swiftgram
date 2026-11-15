@@ -7,6 +7,16 @@ import RangeSet
 final class FetchV2PrioritySelectionTests: XCTestCase {
     private let kb: Int64 = 1024
 
+    func testSeekReadOutranksFullManualDownload() {
+        let ranges = fetchV2PriorityRanges(required: [(0 ..< Int64.max, 2), (8 * 1024 * kb ..< 8 * 1024 * kb + 256 * kb, 1)], knownSize: 16 * 1024 * kb, excluded: RangeSet<Int64>())
+        XCTAssertEqual(self.takeAll(ranges).first, 8 * 1024 * kb ..< 8 * 1024 * kb + 128 * kb)
+    }
+
+    func testShortUrgentReadUsesSmallPartsEvenAtMaximumBoost() {
+        XCTAssertEqual(fetchV2RequestPartSize(partSize: 1024 * kb, priority: 2, range: 0 ..< 2 * 1024 * kb), 128 * kb)
+        XCTAssertEqual(fetchV2RequestPartSize(partSize: 1024 * kb, priority: 0, range: 0 ..< 2 * 1024 * kb), 1024 * kb)
+    }
+
     private func takeAll(_ ranges: [RangeSet<Int64>]) -> [Range<Int64>] {
         var ranges = ranges
         var taken: [Range<Int64>] = []

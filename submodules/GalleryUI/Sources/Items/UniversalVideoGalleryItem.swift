@@ -1682,7 +1682,7 @@ final class UniversalVideoGalleryItemNode: ZoomableContentGalleryItemNode {
                             strongSelf.fetchDisposable.set(messageMediaFileInteractiveFetched(context: item.context, message: message, file: file, userInitiated: true).start())
                         }
                     }, cancel: { [weak self] in
-                        self?.fetchPriorityDisposable.dispose()
+                        self?.fetchPriorityDisposable.set(nil)
                         messageMediaFileCancelInteractiveFetch(context: item.context, messageId: message.id, file: file)
                     })
                 }
@@ -2256,7 +2256,10 @@ final class UniversalVideoGalleryItemNode: ZoomableContentGalleryItemNode {
             self.isCentral = isCentral
             
             if !isCentral {
-                self.frameHeadDisposable.dispose()
+                self.fetchPriorityDisposable.set(nil)
+                // Cancel this fetch while keeping the holder reusable when
+                // the user swipes back to this gallery item.
+                self.frameHeadDisposable.set(nil)
             }
 
             if let videoNode = self.videoNode {

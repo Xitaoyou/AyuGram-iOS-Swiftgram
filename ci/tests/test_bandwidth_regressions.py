@@ -5,28 +5,11 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 class BandwidthRegressionTests(unittest.TestCase):
-    """Keep the "maximum is slower than none" fix from regressing.
+    """Structural regression guards for part sizing, recovery, and CDN gating.
 
-    Device symptom after v2: turning download acceleration up to maximum made
-    downloads SLOWER than turning it off. Root causes, all confirmed in code:
-
-      1. FLOOD_PREMIUM_WAIT_* is a server-side, per-account 420 counting
-         in-flight upload.getFile REQUESTS, not bytes. Raising concurrency to
-         12 only earned a multi-second stall.
-      2. adaptWindow judged congestion by a part's wall-clock latency with
-         fixed 1s/2s thresholds. A 512KB part legitimately takes >2s, so the
-         window was halved on every part and pinned at 2 - versus V1's fixed
-         8 parts with the same 512KB chunks.
-      3. learnedWindowCeiling could only recover inside the "latency < 1s"
-         branch, which a large part can never reach -> permanent deadlock.
-      4. Asking for cdn_supported on mtProtoKit adds a getCdnFileHashes round
-         trip on the throttled main DC for every part, and the iOS CDN retry /
-         fallback paths are rust-gated (a failed hash silently stalls).
-
-    The fix: keep the request rate at 8 (the same as V1), double the bytes per
-    request to the 1MB protocol maximum, stop treating part latency as
-    congestion, and stop asking iOS for CDN. No client change can disable the
-    server throttle; this reaches the highest throughput it permits.
+    In-flight byte capacity is not measured throughput or proof of a server
+    throttling algorithm. Executable Swift scheduling tests live in
+    ci/check_download_scheduling.py; device throughput still needs measurement.
     """
 
     def text(self, relative):
@@ -49,15 +32,15 @@ class BandwidthRegressionTests(unittest.TestCase):
     # Behavioural simulations.
     # ------------------------------------------------------------------
 
-    def test_maximum_moves_twice_the_bytes_at_the_same_request_rate(self):
-        """The only way past a request-count throttle is more bytes/request."""
+    def test_maximum_has_twice_the_inflight_byte_capacity(self):
+        """Check configured capacity, without claiming a throughput gain."""
         rate = 8                       # same as V1's parallelParts for big files
         v1_part = 512 * 1024
         maximum_part = 1024 * 1024
         self.assertEqual(rate * v1_part, 4 * 1024 * 1024)
         self.assertEqual(rate * maximum_part, 8 * 1024 * 1024)
         self.assertEqual(rate * maximum_part, 2 * (rate * v1_part))
-        # The request count that triggers 420 is unchanged.
+        # The configured per-file request ceiling is unchanged.
         self.assertEqual(rate, 8)
 
         source = self.settings()
@@ -74,7 +57,8 @@ class BandwidthRegressionTests(unittest.TestCase):
         self.assertNotIn('else if latency < fastDownloadFastPartLatency', source)
         self.assertNotIn('fastDownloadFastPartLatency', source)
         self.assertNotIn('fastDownloadSlowPartLatency', source)
-        self.assertIn('let _ = latency', source)
+        self.assertIn('now - max(0.001, latency)', source)
+        self.assertIn('state.recentParts.map { $0.started }.min()', source)
         self.assertIn('state.window = min(ceiling, state.window + 1)', source)
         self.assertIn('private let fastDownloadLargePartSize: Int64 = 1024 * 1024', source)
 

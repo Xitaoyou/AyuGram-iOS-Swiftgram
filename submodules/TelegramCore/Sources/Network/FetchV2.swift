@@ -63,8 +63,12 @@ private func alignPartFetchRange(partRange: Range<Int64>, minPartSize: Int64, ma
 // priorities is only in the highest one, so it is fetched once.
 func fetchV2PriorityRanges(required: [(range: Range<Int64>, priority: Int)], knownSize: Int64?, excluded: RangeSet<Int64>) -> [RangeSet<Int64>] {
     var result: [RangeSet<Int64>] = Array(repeating: RangeSet<Int64>(), count: 3)
+    let hasPlaybackRange = required.contains { $0.priority > 0 && $0.range.upperBound != Int64.max }
     for item in required {
-        result[item.priority].formUnion(RangeSet<Int64>(item.range))
+        // A full manual download must not mask a player's bounded read of
+        // the same file (especially after seeking near the end).
+        let priority = hasPlaybackRange && item.range.upperBound == Int64.max ? 0 : item.priority
+        result[priority].formUnion(RangeSet<Int64>(item.range))
     }
     var inHigherPriorities = RangeSet<Int64>()
     for i in (0 ..< result.count).reversed() {
@@ -86,8 +90,9 @@ func fetchV2TakeNextPart(ranges: inout [RangeSet<Int64>], partSize: Int64, minPa
         guard let firstRange = ranges[priorityIndex].ranges.first else {
             continue
         }
+        let requestPartSize = fetchV2RequestPartSize(partSize: partSize, priority: priorityIndex, range: firstRange)
         let part = alignPartFetchRange(
-            partRange: firstRange.lowerBound ..< min(firstRange.upperBound, firstRange.lowerBound + partSize),
+            partRange: firstRange.lowerBound ..< min(firstRange.upperBound, firstRange.lowerBound + requestPartSize),
             minPartSize: minPartSize,
             maxPartSize: maxPartSize,
             alignment: alignment,
@@ -101,15 +106,21 @@ func fetchV2TakeNextPart(ranges: inout [RangeSet<Int64>], partSize: Int64, minPa
     return nil
 }
 
+func fetchV2RequestPartSize(partSize: Int64, priority: Int, range: Range<Int64>) -> Int64 {
+    // A short playback/first-frame read needs its first bytes promptly. Keep
+    // the user's large-part setting for bulk transfer, not for these reads.
+    if priority > 0 && range.upperBound - range.lowerBound <= 2 * 1024 * 1024 {
+        return min(partSize, 128 * 1024)
+    }
+    return partSize
+}
+
 // The resources this process has refreshed a file reference of, for the log only.
 private let fetchV2RefreshedFileReferences = Atomic<Set<String>>(value: Set())
 
 private let fastDownloadMasterPendingParts = 16
 private let fastDownloadCdnPendingParts = 32
-// AYG: the throttle counts in-flight upload.getFile REQUESTS, not bytes.
-// The way past it is therefore a full 1MB part per request at a request rate
-// the account tolerates - not more concurrent requests. 8 is the same rate
-// V1 uses, so maximum moves twice the bytes without provoking more 420s.
+// Large parts can amortize RPC overhead; they do not bypass account limits.
 private let fastDownloadInitialWindow = 8
 private let fastDownloadMinWindow = 2
 private let fastDownloadCeilingProbeInterval: Double = 15.0
@@ -322,7 +333,7 @@ private final class FetchImpl {
         var pendingCdnReuploads: [PendingCdnReupload] = []
         var window: Int = fastDownloadInitialWindow
         var lastWindowDecrease: Double = 0.0
-        var recentParts: [(time: Double, bytes: Int64)] = []
+        var recentParts: [(time: Double, started: Double, bytes: Int64)] = []
         
         init(
             fetchLocation: FetchLocation,
@@ -708,6 +719,11 @@ private final class FetchImpl {
                 // adaptive window behind fastDownloads made every 420 backoff a
                 // no-op on device. Apply it on both engines.
                 maxPendingParts = min(maxPendingParts, state.window)
+                if !self.requiredRanges.contains(where: { $0.priority != .default && $0.value.upperBound != Int64.max }) {
+                    // Reserve a per-file slot too: a full download of this
+                    // resource must leave room for a later seek/read.
+                    maxPendingParts = max(1, maxPendingParts - 1)
+                }
                 // AYG: a fresh resource (a video cover has size == nil) used to
                 // be clamped to 4 in-flight parts on iOS. The learned 420
                 // ceiling now protects the account, so let the first burst use
@@ -997,14 +1013,8 @@ private final class FetchImpl {
                             consumerId: self.consumerId,
                             resourceId: self.resource.id.stringRepresentation,
                             data: Api.functions.upload.getFile(
-                                // AYG: requesting cdn_supported on mtProtoKit
-                                // was a net loss. Every CDN part then needs a
-                                // getCdnFileHashes round trip on the THROTTLED
-                                // main DC plus SHA256, and the iOS CDN failure
-                                // / retry paths are rust-gated, so a bad CDN
-                                // can stall or fail the whole transfer. The
-                                // throttle counts requests, not bytes: fewer,
-                                // larger requests on the main DC are faster.
+                                // Keep CDN redirects restricted to the engine
+                                // with complete CDN retry/fallback support.
                                 flags: self.fastDownloads && !self.cdnDisabled ? (1 << 1) : 0,
                                 location: inputLocation,
                                 offset: part.fetchRange.lowerBound,
@@ -1255,7 +1265,6 @@ private final class FetchImpl {
             // probe must also be unconditional: it used to live in the
             // "latency < 1s" branch, which a large part can never reach, so a
             // throttled account was permanently locked at the floor.
-            let _ = latency
             if now - self.lastCeilingProbe > fastDownloadCeilingProbeInterval {
                 self.lastCeilingProbe = now
                 if let ceiling = self.learnedWindowCeiling {
@@ -1265,12 +1274,14 @@ private final class FetchImpl {
             let ceiling = self.learnedWindowCeiling ?? state.maxPendingParts
             state.window = min(ceiling, state.window + 1)
             
-            state.recentParts.append((now, bytes))
+            state.recentParts.append((now, now - max(0.001, latency), bytes))
             state.recentParts.removeAll(where: { now - $0.time > 2.0 })
             guard case .datacenter = state.fetchLocation, state.recentParts.count >= 4 else {
                 return
             }
-            let span = max(0.25, now - state.recentParts[0].time)
+            // A burst of completions can follow seconds spent downloading.
+            // Measuring only completion timestamps overstates throughput.
+            let span = max(0.25, now - state.recentParts.map { $0.started }.min()!)
             let throughput = Double(state.recentParts.reduce(Int64(0), { $0 + $1.bytes })) / span
             if throughput >= fastDownloadLargePartThroughput {
                 state.partSize = min(state.maxPartSize, fastDownloadLargePartSize)
@@ -1432,8 +1443,11 @@ private final class FetchImpl {
                 return
             }
             if case let .fetching(state) = self.state {
+                let now = CFAbsoluteTimeGetCurrent()
+                guard now - state.lastWindowDecrease >= 1 else { return }
                 state.window = max(fastDownloadMinWindow, state.window / 2)
-                state.lastWindowDecrease = CFAbsoluteTimeGetCurrent()
+                state.lastWindowDecrease = now
+                self.lastCeilingProbe = now
                 // AYG: remember the largest safe window so adaptWindow stops
                 // climbing back into the throttle. The slow probe lets it
                 // recover if the account's budget opens up later.

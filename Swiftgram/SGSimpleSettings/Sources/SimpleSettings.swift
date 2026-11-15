@@ -635,13 +635,9 @@ public func getSGDownloadPartSize(_ default: Int64, fileSize: Int64?) -> Int64 {
             if let fileSize, fileSize <= smallFileSizeThreshold {
                 return `default`
             }
-            // AYG: the account throttle counts REQUESTS, not bytes. 1MB is
-            // the largest part upload.getFile accepts (and is in
-            // possiblePartLengths), so maximum doubles the bytes carried by
-            // the same 8 in-flight requests instead of adding requests that
-            // only earn a FLOOD_PREMIUM_WAIT stall. Slower per-request wall
-            // time is harmless now that adaptWindow no longer treats it as
-            // congestion.
+            // Large bulk parts reduce RPC overhead. This is a protocol size
+            // limit, not a way to remove server-side account throttling.
+            // FetchV2 uses smaller parts for short, urgent playback reads.
             return 1024 * 1024
         default:
             return `default`
@@ -649,11 +645,8 @@ public func getSGDownloadPartSize(_ default: Int64, fileSize: Int64?) -> Int64 {
 }
 
 public func getSGMaxPendingParts(_ default: Int) -> Int {
-    // AYG: FLOOD_PREMIUM_WAIT_* counts in-flight upload.getFile requests, so
-    // concurrency is a LIABILITY, not an accelerator. Raising the top tier to
-    // 12 parts made maximum slower than the "none" tier (V1's fixed 8 parts).
-    // Keep the request rate at 8 and let getSGDownloadPartSize's 1MB parts
-    // double the bytes per request instead.
+    // Bound each file's concurrency. The transport separately shares a
+    // flood-wait budget across files; this setting cannot lift server limits.
     let currentDownloadSetting = SGSimpleSettings.shared.downloadSpeedBoost
     switch (currentDownloadSetting) {
         case SGSimpleSettings.DownloadSpeedBoostValues.medium.rawValue:
