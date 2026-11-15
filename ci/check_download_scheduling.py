@@ -29,6 +29,8 @@ def main():
     disposables = (ROOT / 'submodules/SSignalKit/SwiftSignalKit/Source/Disposable.swift').read_text(encoding='utf-8')
     with tempfile.TemporaryDirectory() as directory:
         output = Path(directory)
+        platform = subprocess.check_output(['xcrun', '--sdk', 'macosx', '--show-sdk-platform-path'], text=True).strip()
+        frameworks = str(Path(platform) / 'Developer/Library/Frameworks')
         subprocess.run([
             'swiftc', '-swift-version', '5', '-emit-module', '-emit-library',
             '-module-name', 'RangeSet',
@@ -84,7 +86,7 @@ XCTMain([''' + ', '.join(suites) + ''', testCase([
         binary = output / 'DownloadSchedulingTests'
         subprocess.run([
             'swiftc', '-swift-version', '5', '-warnings-as-errors',
-            '-I', str(output), '-L', str(output), '-lRangeSet',
+            '-I', str(output), '-L', str(output), '-lRangeSet', '-F', frameworks,
             '-Xlinker', '-rpath', '-Xlinker', str(output),
             *sources, str(runner), '-o', str(binary),
         ], check=True)
