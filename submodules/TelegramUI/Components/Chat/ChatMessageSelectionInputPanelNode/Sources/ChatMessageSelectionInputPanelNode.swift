@@ -658,6 +658,11 @@ public final class ChatMessageSelectionInputPanelNode: ChatInputPanelNode {
 
         // MARK: Swiftgram
         reportButton.isHidden = true
+        // Avoid accidental deletion from the chat's message-selection bar.
+        // Shared-media selection keeps its existing controls.
+        if !self.peerMedia {
+            self.deleteButton.isHidden = true
+        }
         buttons = [
             self.deleteButton,
             self.reportButton,
