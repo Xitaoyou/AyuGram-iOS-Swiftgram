@@ -92,6 +92,9 @@ public class InteractiveTransitionGestureRecognizer: UIPanGestureRecognizer {
     /// The view whose restrictions (horizontal gestures, `disablesInteractiveTransitionGestureRecognizer…`) apply at a
     /// point, when it is not the one `view.hitTest` returns (a container that takes every touch during a transition).
     public var gestureRestrictionsHitTest: ((CGPoint, UIEvent?) -> UIView?)?
+    /// Permit slight initial movement in the opposite direction before deciding.
+    public var initialDirectionTolerance: CGFloat = 0.0
+    public var initialVerticalRejectionDistance: CGFloat = 2.0
     
     public init(target: Any?, action: Selector?, allowedDirections: @escaping (CGPoint) -> InteractiveTransitionGestureRecognizerDirections, edgeWidth: InteractiveTransitionGestureRecognizerEdgeWidth = .constant(16.0)) {
         self.allowedDirections = allowedDirections
@@ -194,11 +197,11 @@ public class InteractiveTransitionGestureRecognizer: UIPanGestureRecognizer {
             }
             
             if !self.validatedGesture {
-                if self.firstLocation.x < edgeWidth && !self.currentAllowedDirections.contains(.rightEdge) {
+                if self.firstLocation.x < edgeWidth && !self.currentAllowedDirections.contains(.rightEdge) && !self.currentAllowedDirections.contains(.leftCenter) {
                     self.state = .failed
                     return
                 }
-                if self.firstLocation.x > size.width - edgeWidth && !self.currentAllowedDirections.contains(.leftEdge) {
+                if self.firstLocation.x > size.width - edgeWidth && !self.currentAllowedDirections.contains(.leftEdge) && !self.currentAllowedDirections.contains(.rightCenter) {
                     self.state = .failed
                     return
                 }
@@ -214,9 +217,9 @@ public class InteractiveTransitionGestureRecognizer: UIPanGestureRecognizer {
                     self.validatedGesture = true
                 } else if self.currentAllowedDirections.contains(.leftEdge) && self.firstLocation.x > size.width - edgeWidth && leftwardIntent {
                     self.validatedGesture = true
-                } else if !self.currentAllowedDirections.contains(.leftCenter) && translation.x < 0.0 {
+                } else if !self.currentAllowedDirections.contains(.leftCenter) && translation.x < -self.initialDirectionTolerance {
                     self.state = .failed
-                } else if !self.currentAllowedDirections.contains(.rightCenter) && translation.x > 0.0 {
+                } else if !self.currentAllowedDirections.contains(.rightCenter) && translation.x > self.initialDirectionTolerance {
                     self.state = .failed
                 } else {
                     let totalMovement = sqrt(absTranslationX * absTranslationX + absTranslationY * absTranslationY)
@@ -229,7 +232,7 @@ public class InteractiveTransitionGestureRecognizer: UIPanGestureRecognizer {
                         } else {
                             self.state = .failed
                         }
-                    } else if absTranslationY > 2.0 && absTranslationY > absTranslationX * 2.0 {
+                    } else if absTranslationY > self.initialVerticalRejectionDistance && absTranslationY > absTranslationX * 2.0 {
                         self.state = .failed
                     } else if absTranslationX > self.minimumCenterMovement && absTranslationY * 1.4 < absTranslationX {
                         self.validatedGesture = true

@@ -8608,7 +8608,7 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
         }
         
         let timestamp = Int32(Date().timeIntervalSince1970)
-        var interfaceState = self.presentationInterfaceState.interfaceState.withUpdatedTimestamp(timestamp)
+        var interfaceState = self.presentationInterfaceState.interfaceState.withoutSelectionState().withUpdatedTimestamp(timestamp)
         if includeScrollState {
             let scrollState = self.chatDisplayNode.historyNode.immediateScrollState()
             interfaceState = interfaceState.withUpdatedHistoryScrollState(scrollState)

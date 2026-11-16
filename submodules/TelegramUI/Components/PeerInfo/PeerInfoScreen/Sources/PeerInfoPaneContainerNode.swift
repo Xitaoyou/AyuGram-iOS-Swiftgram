@@ -798,11 +798,15 @@ final class PeerInfoPaneContainerNode: ASDisplayNode, ASGestureRecognizerDelegat
                 let translation = recognizer.translation(in: self.view)
                 let velocity = recognizer.velocity(in: self.view)
                 var directionIsToRight: Bool?
-                if abs(velocity.x) > 10.0 {
-                    directionIsToRight = velocity.x < 0.0
-                } else {
-                    if abs(translation.x) > size.width / 2.0 {
-                        directionIsToRight = translation.x > size.width / 2.0
+                if recognizer.state == .ended {
+                    if translation.x < 0.0 {
+                        // A tiny leftward drift previously switched tabs at
+                        // just 10 pt/s. Require a deliberate drag or flick.
+                        if -translation.x > size.width * 0.30 || (-translation.x >= 45.0 && velocity.x < -600.0) {
+                            directionIsToRight = true
+                        }
+                    } else if velocity.x > 10.0 || translation.x > size.width / 2.0 {
+                        directionIsToRight = false
                     }
                 }
                 if let directionIsToRight = directionIsToRight {

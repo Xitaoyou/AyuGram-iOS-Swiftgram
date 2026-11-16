@@ -120,6 +120,8 @@ final class NavigationModalContainer: ASDisplayNode, ASScrollViewDelegate, ASGes
             // axis lock distinguish it from a downward scroll.
             return .right
         })
+        panRecognizer.initialDirectionTolerance = 4.0
+        panRecognizer.initialVerticalRejectionDistance = 5.0
         if #available(iOS 13.4, *) {
             panRecognizer.allowedScrollTypesMask = .continuous
         }
@@ -147,7 +149,7 @@ final class NavigationModalContainer: ASDisplayNode, ASScrollViewDelegate, ASGes
             if abs(translation.y) > 4.0 && abs(translation.y) > abs(translation.x) * 2.5 {
                 return false
             }
-            if translation.x < 4.0 {
+            if translation.x <= 0.0 {
                 return false
             }
             if self.isDismissed {
@@ -203,7 +205,7 @@ final class NavigationModalContainer: ASDisplayNode, ASScrollViewDelegate, ASGes
             let progress = translation / self.bounds.width
             let velocity = recognizer.velocity(in: self.view).x
             
-            if (velocity > 1000 || progress > 0.2) && self.checkInteractiveDismissWithControllers() {
+            if recognizer.state == .ended && (velocity > 800 || progress > 0.15) && self.checkInteractiveDismissWithControllers() {
                 self.isDismissed = true
                 self.horizontalDismissOffset = self.bounds.width
                 self.dismissProgress = 1.0

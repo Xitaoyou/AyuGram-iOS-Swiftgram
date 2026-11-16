@@ -2058,7 +2058,7 @@ extension ChatControllerImpl {
                         initialEditMessage = message
                     }
                         
-                    strongSelf.initialInterfaceState = (interfaceState, initialEditMessage)
+                    strongSelf.initialInterfaceState = (interfaceState.withoutSelectionState(), initialEditMessage)
                 } else {
                     strongSelf.initialInterfaceState = (ChatInterfaceState(), nil)
                 }
