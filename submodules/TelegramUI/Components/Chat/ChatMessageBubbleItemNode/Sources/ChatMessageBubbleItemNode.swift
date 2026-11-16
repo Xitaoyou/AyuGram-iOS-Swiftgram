@@ -951,6 +951,7 @@ public class ChatMessageBubbleItemNode: ChatMessageItemView, ChatMessagePreviewI
     private var authorRank: CachedChannelAdminRank?
     
     private var tapRecognizer: TapLongTapOrDoubleTapGestureRecognizer?
+    private var selectionLongPressRecognizer: UILongPressGestureRecognizer?
     
     private var replyRecognizer: ChatSwipeToReplyRecognizer?
     private var currentSwipeAction: ChatControllerInteractionSwipeAction?
@@ -1444,6 +1445,11 @@ public class ChatMessageBubbleItemNode: ChatMessageItemView, ChatMessagePreviewI
     
     override public func didLoad() {
         super.didLoad()
+
+        let selectionLongPress = UILongPressGestureRecognizer(target: self, action: #selector(self.selectionLongPressed(_:)))
+        selectionLongPress.isEnabled = false
+        self.view.addGestureRecognizer(selectionLongPress)
+        self.selectionLongPressRecognizer = selectionLongPress
         
         let recognizer = TapLongTapOrDoubleTapGestureRecognizer(target: self, action: #selector(self.tapLongTapOrDoubleTapGesture(_:)))
         recognizer.tapActionAtPoint = { [weak self] point in
@@ -7812,10 +7818,17 @@ public class ChatMessageBubbleItemNode: ChatMessageItemView, ChatMessagePreviewI
         }
     }
     
+    @objc private func selectionLongPressed(_ recognizer: UILongPressGestureRecognizer) {
+        if recognizer.state == .began, self.item?.controllerInteraction.selectionState != nil {
+            self.openMessageContextMenu()
+        }
+    }
+
     override public func updateSelectionState(animated: Bool) {
         guard let item = self.item else {
             return
         }
+        self.selectionLongPressRecognizer?.isEnabled = item.controllerInteraction.selectionState != nil
         
         let wasSelected = self.selectionNode?.selected
         let previousContentShift = self.subnodeTransform.m41

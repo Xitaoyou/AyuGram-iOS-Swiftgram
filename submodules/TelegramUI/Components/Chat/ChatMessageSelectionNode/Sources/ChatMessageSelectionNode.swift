@@ -8,6 +8,7 @@ import ChatMessageItemCommon
 
 public final class ChatMessageSelectionNode: ASDisplayNode {
     private let toggle: (Bool) -> Void
+    public var openContextMenu: (() -> Void)?
     
     public private(set) var selected = false
     private let checkNode: CheckNode
@@ -35,6 +36,13 @@ public final class ChatMessageSelectionNode: ASDisplayNode {
         super.didLoad()
         
         self.view.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(self.tapGesture(_:))))
+        self.view.addGestureRecognizer(UILongPressGestureRecognizer(target: self, action: #selector(self.longPressGesture(_:))))
+    }
+
+    @objc private func longPressGesture(_ recognizer: UILongPressGestureRecognizer) {
+        if recognizer.state == .began {
+            self.openContextMenu?()
+        }
     }
     
     public func updateSelected(_ selected: Bool, animated: Bool) {

@@ -21,8 +21,23 @@ import ChatPresentationInterfaceState
 
 extension ChatControllerImpl {
     func openMessageContextMenu(message: EngineMessage, selectAll: Bool, node: ASDisplayNode, frame: CGRect, anyRecognizer: UIGestureRecognizer?, location: CGPoint?) -> Void {
-        if self.presentationInterfaceState.interfaceState.selectionState != nil {
-            return
+        if self.presentationInterfaceState.interfaceState.selectionState == nil, anyRecognizer != nil,
+           let messages = self.chatDisplayNode.historyNode.messageGroupInCurrentHistoryView(message.id),
+           let interfaceInteraction = self.interfaceInteraction,
+           !messages.contains(where: { Namespaces.Message.allEphemeral.contains($0.id.namespace) || $0.aygVisibleAdAttribute != nil || $0.media.contains(where: { $0 is TelegramMediaAction || $0 is TelegramMediaExpiredContent }) }) {
+            var canSelect = true
+            if case .pinnedMessages = self.presentationInterfaceState.subject {
+                canSelect = false
+            }
+            if case let .replyThread(thread) = self.presentationInterfaceState.chatLocation, messages.contains(where: { $0.id == thread.effectiveTopId }) {
+                canSelect = false
+            }
+            if canSelect {
+                (self.view.window as? WindowHost)?.cancelInteractiveKeyboardGestures()
+                self.chatDisplayNode.cancelInteractiveKeyboardGestures()
+                interfaceInteraction.beginMessageSelection(messages.map { $0.id }, { _ in })
+                return
+            }
         }
         let presentationData = self.presentationData
         

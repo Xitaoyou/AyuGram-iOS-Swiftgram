@@ -1984,6 +1984,7 @@ public class ChatMessageStickerItemNode: ChatMessageItemView {
                 selectionNode.frame = selectionFrame
                 self.updateSelectionNodeLayout(selectionNode, size: selectionFrame.size, leftInset: self.safeInsets.left)
                 self.addSubnode(selectionNode)
+                selectionNode.openContextMenu = { [weak self] in self?.openMessageContextMenu() }
                 self.selectionNode = selectionNode
                 selectionNode.updateSelected(selected, animated: false)
                 let previousSubnodeTransform = self.subnodeTransform
