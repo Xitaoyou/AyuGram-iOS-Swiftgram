@@ -28,7 +28,7 @@ func leftNavigationButtonForChatInterfaceState(_ presentationInterfaceState: Cha
         }
         //
         if let currentButton = currentButton, currentButton.action == .clearHistory {
-            return currentButton
+            return nil
         } else if let peer = presentationInterfaceState.renderedPeer?.peer {
             let canClear: Bool
             var title = strings.Conversation_ClearAll
@@ -55,9 +55,7 @@ func leftNavigationButtonForChatInterfaceState(_ presentationInterfaceState: Cha
             }
             
             if canClear {
-                let buttonItem = UIBarButtonItem(title: strings.Conversation_ClearAll, style: .plain, target: target, action: selector)
-                buttonItem.accessibilityLabel = title
-                return ChatNavigationButton(action: .clearHistory, buttonItem: buttonItem)
+                return nil
             } else {
                 title = strings.Conversation_ClearCache
                 let buttonItem = UIBarButtonItem(title: strings.Conversation_ClearCache, style: .plain, target: target, action: selector)
