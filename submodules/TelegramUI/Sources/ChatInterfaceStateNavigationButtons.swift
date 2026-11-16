@@ -19,6 +19,14 @@ func leftNavigationButtonForChatInterfaceState(_ presentationInterfaceState: Cha
         if case .replyThread = presentationInterfaceState.chatLocation {
             return nil
         }
+        // MARK: Swiftgram
+        // Message selection starts with nothing selected, so a clear-all control
+        // here would wipe the whole chat before the user picked a single message.
+        // Clearing the history stays available from the chat's context menu.
+        if presentationInterfaceState.interfaceState.selectionState?.selectedIds.isEmpty ?? true {
+            return nil
+        }
+        //
         if let currentButton = currentButton, currentButton.action == .clearHistory {
             return currentButton
         } else if let peer = presentationInterfaceState.renderedPeer?.peer {
