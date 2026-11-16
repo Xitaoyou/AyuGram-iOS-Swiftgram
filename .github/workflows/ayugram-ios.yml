@@ -59,6 +59,13 @@ jobs:
       - name: Check CI helpers
         run: python -m unittest discover -s ci/tests -p 'test_*.py' -v
 
+      # The production Swift scheduling helpers compile and run without an iOS
+      # build. This used to be a separate workflow pinned to macos-latest, a
+      # pool this repository never gets a runner from: every run sat queued for
+      # 15 minutes and was cancelled, so the checks never actually executed.
+      - name: Compile and execute production Swift scheduling tests
+        run: python3 ci/check_download_scheduling.py
+
       - name: Select the Xcode pinned in versions.json
         run: |
           set -euo pipefail
