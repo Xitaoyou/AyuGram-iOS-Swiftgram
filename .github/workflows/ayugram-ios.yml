@@ -78,6 +78,10 @@ jobs:
       # The xcode-27 image ships other Xcodes, simulator runtimes and SDKs the build never uses.
       # Without the space, the runner died about an hour into the Telegram 13.1 build, logs and all.
       - name: Free disk space
+        # Best effort only. The runner's two-minute background deletion is
+        # killed when the step ends, and that kill used to surface as exit 1
+        # and fail the whole build before a single line was compiled.
+        continue-on-error: true
         run: |
           set -uo pipefail
           df -h /
