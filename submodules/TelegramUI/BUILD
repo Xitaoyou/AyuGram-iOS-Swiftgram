@@ -6,7 +6,6 @@ sgdeps = [
     "//Swiftgram/SGAPIWebSettings:SGAPIWebSettings",
     "//Swiftgram/SGAppGroupIdentifier:SGAppGroupIdentifier",
     "//Swiftgram/SGSimpleSettings:SGSimpleSettings",
-    "//Swiftgram/AyuGramEffects:AyuGramEffects",
     "//Swiftgram/SFSafariViewControllerPlus:SFSafariViewControllerPlus",
     "//Swiftgram/SGLogging:SGLogging",
     "//Swiftgram/SGStrings:SGStrings",
@@ -20,7 +19,6 @@ sgdeps = [
     "//Swiftgram/SGProUI:SGProUI",
     "//Swiftgram/SGKeychainBackupManager:SGKeychainBackupManager",
     "//Swiftgram/SGGHSettings:SGGHSettings",
-    "//Swiftgram/AyuGramEffects:AyuGramEffects",
     # "//Swiftgram/SGContentAnalysis:SGContentAnalysis"
 ]
 

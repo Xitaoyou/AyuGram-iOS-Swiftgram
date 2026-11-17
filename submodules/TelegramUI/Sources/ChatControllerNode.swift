@@ -1,7 +1,6 @@
 import Foundation
 import SGSimpleSettings
 import SGSettingsUI
-import AyuGramEffects
 import UIKit
 import AsyncDisplayKit
 import Postbox
@@ -375,7 +374,6 @@ class ChatControllerNode: ASDisplayNode, ASScrollViewDelegate {
     private var scheduledLayoutTransitionRequest: (Int, ContainedViewLayoutTransition)?
     
     private var panRecognizer: WindowPanRecognizer?
-    private var ayuGramBackgroundEffects: AyuGramChatBackgroundEffects?
     private let keyboardGestureRecognizerDelegate = WindowKeyboardGestureRecognizerDelegate()
     private var upperInputPositionBound: CGFloat?
     private var keyboardGestureBeginLocation: CGPoint?
@@ -509,12 +507,6 @@ class ChatControllerNode: ASDisplayNode, ASScrollViewDelegate {
             // A history embedded in a profile pane (Saved): the wallpaper is decoration there. The chat screen itself is
             // left as it is (its own pass).
             backgroundNode.accessibilityElementsHidden = true
-        }
-        switch chatPresentationInterfaceState.mode {
-        case .standard(.default), .standard(.previewing):
-            self.ayuGramBackgroundEffects = AyuGramChatBackgroundEffects(hostNode: backgroundNode)
-        default:
-            break
         }
         
         self.wrappingNode = SpaceWarpNodeImpl()
@@ -1122,21 +1114,18 @@ class ChatControllerNode: ASDisplayNode, ASScrollViewDelegate {
             guard let strongSelf = self else {
                 return
             }
-            strongSelf.ayuGramBackgroundTouchBegan(location: point)
             strongSelf.panGestureBegan(location: point)
         }
         recognizer.moved = { [weak self] point in
             guard let strongSelf = self else {
                 return
             }
-            strongSelf.ayuGramBackgroundTouchMoved(location: point)
             strongSelf.panGestureMoved(location: point)
         }
         recognizer.ended = { [weak self] point, velocity in
             guard let strongSelf = self else {
                 return
             }
-            strongSelf.ayuGramBackgroundEffects?.touchEnded()
             strongSelf.panGestureEnded(location: point, velocity: velocity)
         }
         self.panRecognizer = recognizer
@@ -1217,7 +1206,6 @@ class ChatControllerNode: ASDisplayNode, ASScrollViewDelegate {
     private var isInFocus: Bool = false
     func inFocusUpdated(isInFocus: Bool) {
         self.isInFocus = isInFocus
-        self.ayuGramBackgroundEffects?.updateIsVisible(isInFocus)
         
         if let inputNode = self.inputNode as? ChatEntityKeyboardInputNode {
             inputNode.simulateUpdateLayout(isVisible: isInFocus)
@@ -2249,7 +2237,6 @@ class ChatControllerNode: ASDisplayNode, ASScrollViewDelegate {
             displayMode = .aspectFit
         }
         self.backgroundNode.updateLayout(size: wallpaperBounds.size, displayMode: displayMode, transition: transition)
-        self.ayuGramBackgroundEffects?.updateLayout(size: wallpaperBounds.size)
 
         transition.updateBounds(node: self.historyNodeContainer, bounds: contentBounds)
         transition.updatePosition(node: self.historyNodeContainer, position: contentBounds.center)
@@ -4776,29 +4763,6 @@ class ChatControllerNode: ASDisplayNode, ASScrollViewDelegate {
             }, updateExtraNavigationBarBackgroundHeight: { _, _, _ in
             })
         }
-    }
-    
-    private func ayuGramBackgroundTouchBegan(location: CGPoint) {
-        guard let effects = self.ayuGramBackgroundEffects, effects.handlesTouches else {
-            return
-        }
-        guard self.historyNode.alpha > 0.0, let hitView = self.view.hitTest(location, with: nil), hitView.isDescendant(of: self.historyNodeContainer.view) else {
-            return
-        }
-        var isEmptyBackground = true
-        self.historyNode.forEachVisibleMessageItemNode { itemNode in
-            if isEmptyBackground && itemNode.view.convert(itemNode.contentFrame(), to: self.view).contains(location) {
-                isEmptyBackground = false
-            }
-        }
-        effects.touchBegan(at: self.view.convert(location, to: self.backgroundNode.view), isEmptyBackground: isEmptyBackground)
-    }
-    
-    private func ayuGramBackgroundTouchMoved(location: CGPoint) {
-        guard let effects = self.ayuGramBackgroundEffects, effects.handlesTouches else {
-            return
-        }
-        effects.touchMoved(to: self.view.convert(location, to: self.backgroundNode.view))
     }
     
     private func panGestureBegan(location: CGPoint) {

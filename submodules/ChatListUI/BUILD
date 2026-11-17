@@ -6,8 +6,7 @@ sgdeps = [
     "//Swiftgram/SGSimpleSettings:SGSimpleSettings",
     "//Swiftgram/SGStrings:SGStrings",
     "//Swiftgram/SGAPIWebSettings:SGAPIWebSettings",
-    "//Swiftgram/SGAPIToken:SGAPIToken",
-    "//Swiftgram/AyuGramEffects:AyuGramEffects",
+    "//Swiftgram/SGAPIToken:SGAPIToken"
 ]
 sgsrcs = [
     "//Swiftgram/SGChatListSimpleSettingsSignal:SGChatListSimpleSettingsSignal",
