@@ -5,7 +5,8 @@ load("@build_bazel_rules_apple//apple/testing/default_runner:ios_test_runner.bzl
 sgdeps = [
     "//submodules/BuildConfig:BuildConfig",
     "//Swiftgram/SGSimpleSettings:SGSimpleSettings",
-    "//Swiftgram/SGStrings:SGStrings"
+    "//Swiftgram/SGStrings:SGStrings",
+    "//Swiftgram/SGSettingsUI:SGSettingsUI",
 ]
 
 sgsrc = [
