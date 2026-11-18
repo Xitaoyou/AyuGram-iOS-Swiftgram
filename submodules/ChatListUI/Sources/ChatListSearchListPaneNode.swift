@@ -1,3 +1,4 @@
+import SGSimpleSettings
 import Foundation
 import UIKit
 import SGSimpleSettings
@@ -397,6 +398,9 @@ private enum ChatListRecentEntry: Comparable, Identifiable {
     }
 }
 
+public var ayuGramOpenWebSearch: ((AccountContext, String) -> Void)?
+public var ayuGramOpenAssistant: ((AccountContext) -> Void)?
+
 public enum ChatListSearchEntryStableId: Hashable {
     case threadId(Int64)
     case localPeerId(EnginePeer.Id)
@@ -405,6 +409,7 @@ public enum ChatListSearchEntryStableId: Hashable {
     case messagePlaceholder(Int32)
     case emptyMessagesFooter
     case addContact
+    case webSearch
 }
 
 public enum ChatListSearchSectionExpandType {
@@ -469,6 +474,7 @@ public enum ChatListSearchEntry: Comparable, Identifiable {
     case messagePlaceholder(Int32, ChatListPresentationData, TelegramSearchPeersScope)
     case emptyMessagesFooter(ChatListPresentationData, TelegramSearchPeersScope, String?)
     case addContact(String, PresentationTheme, PresentationStrings)
+    case webSearch(String, PresentationTheme, PresentationStrings)
 
     public var stableId: ChatListSearchEntryStableId {
         switch self {
@@ -490,6 +496,8 @@ public enum ChatListSearchEntry: Comparable, Identifiable {
             return .emptyMessagesFooter
         case .addContact:
             return .addContact
+        case .webSearch:
+            return .webSearch
         }
     }
 
@@ -627,11 +635,28 @@ public enum ChatListSearchEntry: Comparable, Identifiable {
             } else {
                 return false
             }
+        case let .webSearch(lhsQuery, lhsTheme, lhsStrings):
+            if case let .webSearch(rhsQuery, rhsTheme, rhsStrings) = rhs {
+                return lhsQuery == rhsQuery && lhsTheme === rhsTheme && lhsStrings === rhsStrings
+            } else {
+                return false
+            }
         }
     }
 
     public static func <(lhs: ChatListSearchEntry, rhs: ChatListSearchEntry) -> Bool {
+        if case .webSearch = lhs {
+            if case .webSearch = rhs {
+                return false
+            }
+            return true
+        }
+        if case .webSearch = rhs {
+            return false
+        }
         switch lhs {
+        case .webSearch:
+            return true
         case let .topic(_, _, lhsIndex, _, _, _):
             if case let .topic(_, _, rhsIndex, _, _, _) = rhs {
                 return lhsIndex <= rhsIndex
@@ -648,7 +673,7 @@ public enum ChatListSearchEntry: Comparable, Identifiable {
             }
         case let .localPeer(_, _, _, lhsIndex, _, _, _, _, _, _, _, _):
             switch rhs {
-            case .topic, .recentlySearchedPeer:
+            case .topic, .recentlySearchedPeer, .webSearch:
                 return false
             case let .localPeer(_, _, _, rhsIndex, _, _, _, _, _, _, _, _):
                 return lhsIndex <= rhsIndex
@@ -657,7 +682,7 @@ public enum ChatListSearchEntry: Comparable, Identifiable {
             }
         case let .adPeer(_, lhsIndex, _, _, _, _, _, _):
             switch rhs {
-            case .topic, .recentlySearchedPeer, .localPeer:
+            case .topic, .recentlySearchedPeer, .localPeer, .webSearch:
                 return false
             case let .adPeer(_, rhsIndex, _, _, _, _, _, _):
                 return lhsIndex <= rhsIndex
@@ -666,7 +691,7 @@ public enum ChatListSearchEntry: Comparable, Identifiable {
             }
         case let .globalPeer(_, _, lhsIndex, _, _, _, _, _, _, _, _):
             switch rhs {
-            case .topic, .recentlySearchedPeer, .localPeer, .adPeer:
+            case .topic, .recentlySearchedPeer, .localPeer, .adPeer, .webSearch:
                 return false
             case let .globalPeer(_, _, rhsIndex, _, _, _, _, _, _, _, _):
                 return lhsIndex <= rhsIndex
@@ -1297,6 +1322,11 @@ public enum ChatListSearchEntry: Comparable, Identifiable {
             case let .addContact(phoneNumber, theme, strings):
                 return ContactsAddItem(context: context, theme: theme, strings: strings, phoneNumber: phoneNumber, header: ChatListSearchItemHeader(type: .phoneNumber, theme: theme, strings: strings, actionTitle: nil, action: nil), action: {
                     interaction.addContact(phoneNumber)
+                })
+            case let .webSearch(query, theme, _):
+                let icon = UIImage(systemName: "magnifyingglass")?.withTintColor(theme.list.itemAccentColor, renderingMode: .alwaysOriginal) ?? UIImage()
+                return ContactListActionItem(presentationData: ItemListPresentationData(presentationData), title: AyuGramSearchEngine.current.title + ": " + query, icon: .generic(icon), header: nil, action: {
+                    ayuGramOpenWebSearch?(context, query)
                 })
         }
     }
@@ -3496,6 +3526,20 @@ final class ChatListSearchListPaneNode: ASDisplayNode, ChatListSearchPaneNode {
 
                 if case .chats = key, !peersFilter.contains(.excludeRecent), isViablePhoneNumber(finalQuery) {
                     entries.append(.addContact(finalQuery, presentationData.theme, presentationData.strings))
+                }
+
+                if case .chats = key, !peersFilter.contains(.excludeRecent), !finalQuery.isEmpty, !foundRemotePeers.3, !isViablePhoneNumber(finalQuery) {
+                    let hasPeers = entries.contains(where: { entry in
+                        switch entry {
+                        case .topic, .recentlySearchedPeer, .localPeer, .globalPeer, .adPeer:
+                            return true
+                        default:
+                            return false
+                        }
+                    })
+                    if !hasPeers {
+                        entries.insert(.webSearch(finalQuery, presentationData.theme, presentationData.strings), at: 0)
+                    }
                 }
 
                 return (entries, isSearching, query)

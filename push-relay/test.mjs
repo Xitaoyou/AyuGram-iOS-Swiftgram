@@ -2,6 +2,7 @@
 import assert from 'node:assert/strict';
 import { webcrypto as crypto, createHash } from 'node:crypto';
 import { accountHash } from './stats.js';
+import { checkBadgePayments } from './badges.js';
 import worker, { base64urlEncode, describe, sendToBark, chatTarget, seenUpdate, alreadySeen, Presence, activityId, Stats, stashRecord } from './worker.js';
 
 const cacheStore = new Map();
@@ -360,6 +361,7 @@ assert.equal(stashRecord({ loc_key: 'MESSAGE_TEXT', loc_args: ['A', 'x'], custom
     assert.equal(notice.method, 'sendMessage');
     assert.equal(notice.body.chat_id, '1272887902');
     assert.ok(notice.body.text.includes('На кого: @scam Scam (ID 555)'));
+    assert.ok(/Жалобщик: #[0-9A-F]{6}/.test(notice.body.text), 'A report carries a stable reporter tag');
     const rid = notice.body.reply_markup.inline_keyboard[0][0].callback_data.slice(2);
     assert.match(rid, /^[0-9a-f]{12}$/);
     assert.equal((await hook({ message: { from: { id: 1272887902 }, chat: { id: 1272887902 }, text: '/start' } }, 'wrong-secret')).status, 403, 'Updates without the webhook secret are refused');
@@ -574,8 +576,316 @@ assert.equal(stashRecord({ loc_key: 'MESSAGE_TEXT', loc_args: ['A', 'x'], custom
     await press('Z:777:abuse');
     assert.ok(calls.find((call) => call.method === 'editMessageText').body.text.includes('✅ найден (1 устр.)'), 'A direct ban reports whether AyuGram is installed');
     await sendText('/unban 777');
+    calls.length = 0;
+    await press('Z:777:custom');
+    assert.ok(calls.find((call) => call.method === 'sendMessage').body.text.includes('Напиши причину'), 'A custom reason is asked for as text');
+    assert.equal((await status([hash777])).banned, false, 'Nothing is banned before the custom reason arrives');
+    calls.length = 0;
+    await sendText('слив  исходников\nв паблик');
+    const custom777 = await status([hash777]);
+    assert.equal(custom777.banned, true, 'The custom reason applies the ban');
+    assert.equal(custom777.banReason, 'слив исходников в паблик', 'The custom reason reaches the app as text');
+    calls.length = 0;
+    await sendText('/bans');
+    assert.ok(calls.find((call) => call.method === 'sendMessage').body.text.includes('слив исходников в паблик'), 'The ban list shows the custom reason');
+    await sendText('просто текст');
+    assert.equal((await status([hash777])).banReason, 'слив исходников в паблик', 'Text without a pending question changes nothing');
+    await sendText('/unban 777');
+    await press('Z:777:custom');
+    await sendText('/cancel');
+    await sendText('поздно');
+    assert.equal((await status([hash777])).banned, false, 'A cancelled custom reason bans nobody');
   } finally {
     globalThis.fetch = realFetch2;
   }
 }
 console.log('push relay: aes128gcm and aesgcm pushes reach Bark');
+
+await testBadges();
+async function testBadges() {
+  const data = new Map();
+  const storage = {
+    async get(k) { return Array.isArray(k) ? new Map(k.filter((key) => data.has(key)).map((key) => [key, data.get(key)])) : data.get(k); },
+    async put(k, v) { if (typeof k === 'object') { for (const [key, value] of Object.entries(k)) data.set(key, value); } else { data.set(k, v); } },
+    async delete(keys) { for (const k of [].concat(keys)) data.delete(k); },
+    async list({ prefix }) { return new Map([...data].filter(([k]) => k.startsWith(prefix)).sort()); },
+  };
+  const object = new Stats({ storage });
+  const STATS = { idFromName(name) { return name; }, get() { return { fetch: (url, init) => object.fetch(new Request(url, init)) }; } };
+  const env = { STATS, REPORT_BOT_TOKEN: '1:a', REPORT_CHAT_ID: '1272887902', REPORT_WEBHOOK_SECRET: 'h' };
+  const sent = [];
+  const real = globalThis.fetch;
+  globalThis.fetch = async (url, init) => { sent.push(JSON.parse(init.body)); return new Response('{"ok":true}'); };
+  try {
+    const post = (path, body) => worker.fetch(new Request('https://relay.example' + path, { method: 'POST', body: JSON.stringify(body) }), env);
+    const list = async () => (await (await worker.fetch(new Request('https://relay.example/badges'), env)).json()).items;
+    const hook = (update) => worker.fetch(new Request('https://relay.example/tg/hook', { method: 'POST', headers: { 'x-telegram-bot-api-secret-token': 'h' }, body: JSON.stringify(update) }), env);
+    const secret = 'a'.repeat(32);
+    const thief = 'b'.repeat(32);
+    assert.equal((await post('/badges/set', { id: '500', secret, badge: { symbol: 'crown.fill' } })).status, 403, 'Nobody sets a badge before it is granted');
+    assert.deepEqual(await list(), [], 'No supporters yet');
+    const requested = await (await post('/badges/request', { id: '500', secret, name: 'Payer' })).json();
+    assert.match(requested.code, /^[A-Z0-9]{6}$/, 'A request gets a code');
+    assert.ok(sent[0].text.includes(requested.code) && sent[0].reply_markup.inline_keyboard[0][0].callback_data === 'G:' + requested.code, 'The owner is asked to grant');
+    assert.equal((await (await post('/badges/request', { id: '500', secret })).json()).code, requested.code, 'Asking again keeps the code');
+    assert.equal((await (await post('/badges/status', { id: '500', secret })).json()).granted, false);
+    await hook({ callback_query: { id: 'q', from: { id: 999 }, data: 'G:' + requested.code, message: { message_id: 1, chat: { id: 999 } } } });
+    assert.deepEqual(await list(), [], 'Only the owner grants');
+    await hook({ callback_query: { id: 'q', from: { id: 1272887902 }, data: 'G:' + requested.code, message: { message_id: 1, chat: { id: 1272887902 } } } });
+    assert.equal((await list()).length, 1, 'A granted supporter is listed');
+    assert.equal((await post('/badges/set', { id: '500', secret: thief, badge: { symbol: 'crown.fill' } })).status, 403, 'Another install cannot change the badge');
+    assert.equal((await (await post('/badges/status', { id: '500', secret: thief })).json()).granted, false, 'Another install is not the owner of the badge');
+    assert.equal((await post('/badges/set', { id: '500', secret, badge: { symbol: 'crown.fill', emoji: '<b>', shape: 9, top: 'zzzzzz', bottom: 'ff0000', darkGlyph: true } })).status, 200);
+    assert.deepEqual((await list())[0], { id: '500', b: { symbol: 'crown.fill', emoji: '', shape: 0, top: '8E61F2', bottom: 'FF0000', darkGlyph: true } }, 'The stored badge is sanitized');
+    await hook({ message: { from: { id: 1272887902 }, chat: { id: 1272887902 }, text: '/unbadge 500' } });
+    assert.deepEqual(await list(), [], 'The owner can take a badge back');
+    await hook({ message: { from: { id: 1272887902 }, chat: { id: 1272887902 }, text: '/badge 501' } });
+    assert.equal((await post('/badges/set', { id: '501', secret, badge: {} })).status, 200, 'A badge granted by id is claimed by the first install');
+    assert.equal((await post('/badges/set', { id: '501', secret: thief, badge: {} })).status, 403, 'and locked to it afterwards');
+    console.log('push relay: supporter badges are granted by the owner and locked to the paying install');
+  } finally {
+    globalThis.fetch = real;
+  }
+}
+await testBadgePayments();
+async function testBadgePayments() {
+  const data = new Map();
+  const storage = {
+    async get(k) { return data.get(k); },
+    async put(k, v) { data.set(k, v); },
+    async delete(keys) { for (const k of [].concat(keys)) data.delete(k); },
+    async list({ prefix }) { return new Map([...data].filter(([k]) => k.startsWith(prefix)).sort()); },
+  };
+  const object = new Stats({ storage });
+  const STATS = { idFromName(name) { return name; }, get() { return { fetch: (url, init) => object.fetch(new Request(url, init)) }; } };
+  const env = { STATS, REPORT_BOT_TOKEN: '1:a', REPORT_CHAT_ID: '1272887902', REPORT_WEBHOOK_SECRET: 'h', CRYPTOPAY_TOKEN: '1234:test' };
+  const invoices = new Map();
+  let nextInvoice = 70;
+  let tonList = [];
+  const rocketInvoices = new Map();
+  const owner = [];
+  const real = globalThis.fetch;
+  const realNow = Date.now;
+  let shift = 0;
+  Date.now = () => realNow() + shift;
+  globalThis.fetch = async (url, init) => {
+    const link = String(url);
+    const body = init && init.body ? JSON.parse(init.body) : {};
+    if (link.startsWith('https://pay.crypt.bot/api/')) {
+      assert.equal(init.headers['Crypto-Pay-API-Token'], '1234:test');
+      const method = link.slice(26);
+      if (method === 'createInvoice') {
+        assert.equal(body.fiat, 'USD');
+        assert.equal(body.amount, '3');
+        const invoice = { invoice_id: nextInvoice++, status: 'active', payload: body.payload, bot_invoice_url: 'https://t.me/CryptoBot?start=IV' + nextInvoice, amount: '3', fiat: 'USD' };
+        invoices.set(invoice.invoice_id, invoice);
+        return Response.json({ ok: true, result: invoice });
+      }
+      if (method === 'getInvoices') {
+        const ids = body.invoice_ids ? body.invoice_ids.split(',').map(Number) : [...invoices.keys()];
+        return Response.json({ ok: true, result: { items: ids.map((id) => invoices.get(id)).filter((item) => item && (!body.status || item.status === body.status)) } });
+      }
+      if (method === 'getMe') {
+        return Response.json({ ok: true, result: { app_id: 1, name: 'AyuGram badges' } });
+      }
+      if (method === 'getExchangeRates') {
+        return Response.json({ ok: true, result: [{ is_valid: true, source: 'TON', target: 'USD', rate: '2.5' }] });
+      }
+    }
+    if (link.startsWith('https://pay.xrocket.tg/')) {
+      assert.equal(init.headers['Rocket-Pay-Key'], 'rocket-test');
+      if (link === 'https://pay.xrocket.tg/app/info') {
+        return Response.json({ success: true, data: { name: 'AyuGram rocket' } });
+      }
+      if (init.method === 'POST' && link === 'https://pay.xrocket.tg/tg-invoices') {
+        assert.deepEqual([body.amount, body.currency, body.numPayments], [3, 'USDT', 1]);
+        const invoice = { id: 900 + rocketInvoices.size, amount: body.amount, currency: body.currency, payload: body.payload, status: 'active', link: 'https://t.me/xrocket?start=inv_test' + rocketInvoices.size };
+        rocketInvoices.set(String(invoice.id), invoice);
+        return Response.json({ success: true, data: invoice });
+      }
+      const invoice = rocketInvoices.get(link.split('/').pop());
+      return invoice ? Response.json({ success: true, data: invoice }) : Response.json({ success: false }, { status: 404 });
+    }
+    if (link.startsWith('https://toncenter.com/api/v2/getTransactions')) {
+      assert.ok(link.includes('UQCvj3aWiCCzawOO5OeRM9C3Ts5n4hc1tep1ZZ7aBYG33Glp'));
+      return Response.json({ ok: true, result: tonList });
+    }
+    if (link.startsWith('https://api.telegram.org/')) {
+      owner.push(body);
+      return Response.json({ ok: true });
+    }
+    throw new Error('unexpected fetch ' + link);
+  };
+  try {
+    const post = (path, body) => worker.fetch(new Request('https://relay.example' + path, { method: 'POST', body: JSON.stringify(body) }), env);
+    const list = async () => (await (await worker.fetch(new Request('https://relay.example/badges'), env)).json()).items.map((item) => item.id);
+    const secret = 'c'.repeat(32);
+    const first = await (await post('/badges/request', { id: '600', secret, name: 'Crypto' })).json();
+    assert.match(first.code, /^[A-Z0-9]{6}$/);
+    assert.ok(first.pay.cryptobot.startsWith('https://t.me/CryptoBot?start=IV'), 'A request gets its own Crypto Bot invoice');
+    assert.deepEqual([first.pay.ton.amount, first.pay.ton.nano, first.pay.ton.comment], ['1.2', '1200000000', first.code], 'and a TON quote with the code as the comment');
+    assert.ok(first.pay.ton.url.startsWith('ton://transfer/UQCvj3aWiCCzawOO5OeRM9C3Ts5n4hc1tep1ZZ7aBYG33Glp?amount=1200000000&text=' + first.code));
+    assert.equal(invoices.size, 1);
+    shift += 10000;
+    const again = await (await post('/badges/status', { id: '600', secret })).json();
+    assert.equal(again.granted, false, 'An unpaid invoice grants nothing');
+    assert.equal(again.pay.cryptobot, first.pay.cryptobot, 'The invoice is reused');
+    assert.equal(invoices.size, 1);
+    const invoice = invoices.get(70);
+    invoice.status = 'paid';
+    invoice.paid_amount = '3';
+    invoice.paid_asset = 'USDT';
+    const update = JSON.stringify({ update_id: 1, update_type: 'invoice_paid', request_date: new Date().toISOString(), payload: invoice });
+    const key = await crypto.subtle.importKey('raw', await crypto.subtle.digest('SHA-256', new TextEncoder().encode('1234:test')), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+    const signature = Buffer.from(await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(update))).toString('hex');
+    const hook = (sig) => worker.fetch(new Request('https://relay.example/pay/cryptobot', { method: 'POST', headers: { 'crypto-pay-api-signature': sig }, body: update }), env);
+    assert.equal((await hook('0'.repeat(64))).status, 403, 'A forged webhook is refused');
+    assert.deepEqual(await list(), [], 'and grants nothing');
+    assert.equal((await hook(signature)).status, 200);
+    assert.deepEqual(await list(), ['600'], 'A signed invoice_paid webhook grants the badge');
+    assert.ok(owner.at(-1).text.includes('автоматически') && owner.at(-1).text.includes('3 USDT') && owner.at(-1).reply_markup.inline_keyboard[0][0].callback_data === 'R:600', 'The owner is told and can take it back');
+    assert.equal((await (await post('/badges/status', { id: '600', secret })).json()).granted, true, 'The payer sees the badge');
+    assert.equal((await post('/badges/set', { id: '600', secret, badge: { symbol: 'star.fill' } })).status, 200, 'and can edit it');
+    assert.equal((await hook(signature)).status, 200, 'A repeated webhook is harmless');
+
+    const tonSecret = 'd'.repeat(32);
+    const ton = await (await post('/badges/request', { id: '601', secret: tonSecret, name: 'Ton' })).json();
+    tonList = [{ utime: Math.floor(Date.now() / 1000), transaction_id: { lt: '1', hash: 'h1' }, in_msg: { source: 'EQsender', value: '1000000000', message: ton.code } }];
+    shift += 10000;
+    assert.equal((await (await post('/badges/status', { id: '601', secret: tonSecret })).json()).granted, false, 'Too little TON grants nothing');
+    tonList.push({ utime: Math.floor(Date.now() / 1000), transaction_id: { lt: '2', hash: 'h2' }, in_msg: { source: 'EQsender', value: '1190000000', message: ' ' + ton.code.toLowerCase() + ' ' } });
+    shift += 4000;
+    assert.equal((await (await post('/badges/status', { id: '601', secret: tonSecret })).json()).granted, false, 'Checks are throttled');
+    shift += 6000;
+    const paidTon = await (await post('/badges/status', { id: '601', secret: tonSecret })).json();
+    assert.equal(paidTon.granted, true, 'A TON transfer with the code in the comment grants the badge');
+    assert.ok(owner.at(-1).text.includes('1.19 TON'));
+    assert.deepEqual((await list()).sort(), ['600', '601']);
+
+    const cronSecret = 'e'.repeat(32);
+    const cron = await (await post('/badges/request', { id: '602', secret: cronSecret, name: 'Cron' })).json();
+    tonList.push({ utime: Math.floor(Date.now() / 1000), transaction_id: { lt: '3', hash: 'h2' }, in_msg: { source: 'EQsender', value: '5000000000', message: cron.code } });
+    assert.equal(await checkBadgePayments(env), 0, 'A reused TON transaction grants nothing');
+    const cronInvoice = [...invoices.values()].find((item) => item.payload === cron.code);
+    cronInvoice.status = 'paid';
+    assert.equal(await checkBadgePayments(env), 1, 'The scheduled check grants a paid invoice when the app is closed');
+    assert.deepEqual((await list()).sort(), ['600', '601', '602']);
+    assert.equal(await checkBadgePayments(env), 0, 'Nothing is left to check');
+    const rocketEnv = { ...env, XROCKET_TOKEN: 'rocket-test', XROCKET_WEBHOOK_TOKEN: 'hook-test' };
+    const rocketPost = (path, body) => worker.fetch(new Request('https://relay.example' + path, { method: 'POST', body: JSON.stringify(body) }), rocketEnv);
+    const rocketSecret = 'g'.repeat(32);
+    const rocket = await (await rocketPost('/badges/request', { id: '604', secret: rocketSecret, name: 'Rocket' })).json();
+    assert.ok(rocket.pay.xrocket.startsWith('https://t.me/xrocket?start=inv_test'), 'A request gets its own xRocket invoice');
+    const rocketInvoice = [...rocketInvoices.values()].find((item) => item.payload === rocket.code);
+    const rocketBody = JSON.stringify({ type: 'invoicePay', data: { id: rocketInvoice.id, payload: rocket.code, status: 'paid' } });
+    const rocketKey = await crypto.subtle.importKey('raw', new TextEncoder().encode('hook-test'), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+    const rocketSignature = Buffer.from(await crypto.subtle.sign('HMAC', rocketKey, new TextEncoder().encode(rocketBody))).toString('hex');
+    const rocketHook = (sig) => worker.fetch(new Request('https://relay.example/pay/xrocket', { method: 'POST', headers: { 'rocket-pay-signature': sig === undefined ? rocketSignature : sig }, body: rocketBody }), rocketEnv);
+    rocketInvoice.status = 'paid';
+    assert.equal((await rocketHook('f'.repeat(64))).status, 403, 'An xRocket webhook with a wrong signature is refused');
+    assert.ok(!(await list()).includes('604'), 'and grants nothing');
+    rocketInvoice.status = 'active';
+    assert.equal((await rocketHook()).status, 200);
+    assert.ok(!(await list()).includes('604'), 'A webhook alone grants nothing while the invoice is unpaid');
+    rocketInvoice.status = 'paid';
+    assert.equal((await rocketHook()).status, 200);
+    assert.ok((await list()).includes('604'), 'A paid xRocket invoice grants the badge');
+    assert.ok(owner.at(-1).text.includes('xRocket') && owner.at(-1).text.includes('3 USDT'));
+    const rocketCron = await (await rocketPost('/badges/request', { id: '605', secret: 'h'.repeat(32) })).json();
+    [...rocketInvoices.values()].find((item) => item.payload === rocketCron.code).activatedCount = 1;
+    assert.equal(await checkBadgePayments(rocketEnv), 1, 'The scheduled check finds paid xRocket invoices too');
+    const healthEnv = { ...rocketEnv, STATS_TOKEN: 'stats-test' };
+    assert.equal((await worker.fetch(new Request('https://relay.example/badges/health'), healthEnv)).status, 403, 'Payment health needs the stats token');
+    const health = await (await worker.fetch(new Request('https://relay.example/badges/health', { headers: { authorization: 'Bearer stats-test' } }), healthEnv)).json();
+    assert.deepEqual([health.cryptobot.ok, health.cryptobot.app, health.xrocket.ok, health.xrocket.webhookToken, health.ton.ok, health.ton.rate, health.ton.quote], [true, 'AyuGram badges', true, true, true, 2.5, '1.2'], 'Payment health reports every method');
+    assert.ok(!JSON.stringify(health).includes('1234:test') && !JSON.stringify(health).includes('rocket-test') && !JSON.stringify(health).includes('hook-test'), 'and never leaks a token');
+    await worker.fetch(new Request('https://relay.example/tg/hook', { method: 'POST', headers: { 'x-telegram-bot-api-secret-token': 'h' }, body: JSON.stringify({ message: { from: { id: 1272887902 }, chat: { id: 1272887902 }, text: '/pay' } }) }), healthEnv);
+    assert.ok(owner.at(-1).text.includes('Crypto Bot: ✅') && owner.at(-1).text.includes('xRocket: ✅') && owner.at(-1).text.includes('1.2 TON'), 'The owner checks payments with /pay');
+    shift += 10000;
+    const tonOnly = { ...env, CRYPTOPAY_TOKEN: '' };
+    const plain = await (await worker.fetch(new Request('https://relay.example/badges/request', { method: 'POST', body: JSON.stringify({ id: '603', secret: 'f'.repeat(32) }) }), tonOnly)).json();
+    assert.equal(plain.pay.cryptobot, '', 'Without a Crypto Pay token there is no invoice');
+    assert.equal(plain.pay.xrocket, '', 'and without an xRocket token no xRocket invoice');
+    console.log('push relay: supporter badges unlock by themselves after Crypto Bot, xRocket and TON payments');
+  } finally {
+    globalThis.fetch = real;
+    Date.now = realNow;
+  }
+}
+await testAbuseLimits();
+async function testAbuseLimits() {
+  const data = new Map();
+  const storage = {
+    async get(k) { return data.get(k); },
+    async put(k, v) { data.set(k, v); },
+    async delete(keys) { for (const k of [].concat(keys)) data.delete(k); },
+    async list({ prefix }) { return new Map([...data].filter(([k]) => k.startsWith(prefix)).sort()); },
+  };
+  const object = new Stats({ storage });
+  const STATS = { idFromName(name) { return name; }, get() { return { fetch: (url, init) => object.fetch(new Request(url, init)) }; } };
+  const env = { STATS, STATS_TOKEN: 'secret-token', PRO_API_KEY: 'x', GROQ_API_KEY: 'gsk_x' };
+  assert.equal((await worker.fetch(new Request('https://relay.example/ai/pro', { method: 'POST', body: '{}' }), env)).status, 404, 'The paid assistant is off unless enabled');
+  assert.equal((await worker.fetch(new Request('https://relay.example/ai/search?q=x'), env)).status, 404, 'The search debug endpoint needs the stats token');
+  const from = (path, body, ip) => worker.fetch(new Request('https://relay.example' + path, { method: 'POST', headers: { 'cf-connecting-ip': ip }, body: JSON.stringify(body) }), env);
+  const base = { build: 207601, variant: 'standard', source: 'sideload', status: 'official', team: 'OWN1234567', teamName: 'Me', bundle: 'ph.telegra.Telegraph.OWN1234567', os: '26.1', device: 'iPhone17,1' };
+  for (let i = 0; i < 12; i += 1) {
+    assert.equal((await from('/stats/ping', { ...base, id: 'flood-' + String(i).padStart(4, '0') }, '203.0.113.7')).status, 200);
+  }
+  assert.equal((await from('/stats/ping', { ...base, id: 'flood-0099' }, '203.0.113.7')).status, 429, 'One address cannot invent installs without end');
+  assert.equal((await from('/stats/ping', { ...base, id: 'flood-0001' }, '203.0.113.7')).status, 200, 'Known installs keep pinging');
+  assert.equal((await from('/stats/ping', { ...base, id: 'other-0001' }, '203.0.113.8')).status, 200, 'Other addresses are not affected');
+  const real = globalThis.fetch;
+  globalThis.fetch = async () => new Response('{"ok":true}');
+  try {
+    let accepted = 0;
+    for (let i = 0; i < 12; i += 1) {
+      const response = await from('/stats/report', { ...base, id: 'spam-' + String(i).padStart(4, '0'), text: 'spam ' + i }, '198.51.100.9');
+      accepted += response.status === 200 ? 1 : 0;
+    }
+    assert.equal(accepted, 8, 'Changing the install id does not lift the report limit of one address');
+    assert.ok(![...data.keys()].some((key) => key.includes('198.51.100.9')), 'Addresses are stored only as salted hashes');
+  } finally {
+    globalThis.fetch = real;
+  }
+  console.log('push relay: abuse limits hold per address and the paid assistant is off');
+}
+await testModerationSignature();
+async function testModerationSignature() {
+  const data = new Map();
+  const storage = {
+    async get(k) { return Array.isArray(k) ? new Map(k.filter((key) => data.has(key)).map((key) => [key, data.get(key)])) : data.get(k); },
+    async put(k, v) { if (typeof k === 'object') { for (const [key, value] of Object.entries(k)) data.set(key, value); } else { data.set(k, v); } },
+    async delete(keys) { for (const k of [].concat(keys)) data.delete(k); },
+    async list({ prefix }) { return new Map([...data].filter(([k]) => k.startsWith(prefix)).sort()); },
+  };
+  const object = new Stats({ storage });
+  const STATS = { idFromName(name) { return name; }, get() { return { fetch: (url, init) => object.fetch(new Request(url, init)) }; } };
+  const kp = await crypto.subtle.generateKey('Ed25519', true, ['sign', 'verify']);
+  const pkcs8 = Buffer.from(new Uint8Array(await crypto.subtle.exportKey('pkcs8', kp.privateKey))).toString('base64');
+  const rawPub = new Uint8Array(await crypto.subtle.exportKey('raw', kp.publicKey));
+  const pub = await crypto.subtle.importKey('raw', rawPub, 'Ed25519', true, ['verify']);
+  const env = { STATS, STATS_TOKEN: 'secret-token', REPORT_BOT_TOKEN: '1:a', REPORT_CHAT_ID: '1272887902', REPORT_WEBHOOK_SECRET: 'h', MODERATION_KEY: pkcs8 };
+  const id = 'install-sign-01';
+  const status = (accounts) => worker.fetch(new Request('https://relay.example/stats/status', { method: 'POST', body: JSON.stringify({ id, accounts }) }), env).then((r) => r.json());
+  const verify = (body) => {
+    const message = new TextEncoder().encode('ayugram-mod|' + id + '|' + (body.banned ? 1 : 0) + '|' + (body.blocked ? 1 : 0) + '|' + body.ts);
+    return crypto.subtle.verify('Ed25519', pub, Uint8Array.from(atob(body.sig), (ch) => ch.charCodeAt(0)), message);
+  };
+
+  const clean = await status([]);
+  assert.ok(typeof clean.ts === 'number' && typeof clean.sig === 'string', 'A signed relay stamps ts and sig');
+  assert.equal(await verify(clean), true, 'The raw public key verifies the relay signature the way the app will');
+
+  const scammer = await accountHash('42');
+  await object.fetch(new Request('https://stats.ayugram.invalid/ban-id/ban/42?reason=scam', { method: 'POST' }));
+  const banned = await status([scammer]);
+  assert.equal(banned.banned, true, 'The ban reaches the account');
+  assert.equal(await verify(banned), true, 'A ban is signed over its own banned flag');
+  const forged = { ...banned, banned: false };
+  assert.equal(await verify(forged), false, 'Flipping banned to false breaks the signature');
+
+  const noKey = await worker.fetch(new Request('https://relay.example/stats/status', { method: 'POST', body: JSON.stringify({ id, accounts: [] }) }), { STATS, STATS_TOKEN: 'secret-token' }).then((r) => r.json());
+  assert.equal(noKey.sig, undefined, 'Without a key the response stays unsigned (backward compatible)');
+  console.log('push relay: moderation responses are Ed25519-signed and verify with the raw public key');
+}
+

@@ -470,6 +470,10 @@ private class AdMessagesHistoryContextImpl {
             })
         }
 
+        if AyuGramSettings.shared.extra.disableAds {
+            self.state.set(.single(State(interPostInterval: nil, messages: [])))
+        }
+
         if !activateManually {
             self.activate()
         }
@@ -505,6 +509,10 @@ private class AdMessagesHistoryContextImpl {
     
     func activate() {
         if self.isActivated {
+            return
+        }
+        if AyuGramSettings.shared.extra.disableAds {
+            self.state.set(.single(State(interPostInterval: nil, messages: [])))
             return
         }
         self.isActivated = true

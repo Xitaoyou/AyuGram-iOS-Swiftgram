@@ -21,6 +21,14 @@ private func ayuPlane(_ rect: CGRect, foreground: UIColor, secondary: UIColor) {
 }
 
 public func ayuGramOwnerBadgeImage() -> UIImage {
+    return ayuSealBadgeImage(fill: UIColor(red: 0.56, green: 0.38, blue: 0.95, alpha: 1), secondary: UIColor(red: 0.85, green: 0.77, blue: 1, alpha: 1))
+}
+
+public func ayuGramChannelBadgeImage() -> UIImage {
+    return ayuSealBadgeImage(fill: UIColor(red: 0.90, green: 0.18, blue: 0.20, alpha: 1), secondary: UIColor(red: 1, green: 0.78, blue: 0.78, alpha: 1))
+}
+
+private func ayuSealBadgeImage(fill: UIColor, secondary: UIColor) -> UIImage {
     return UIGraphicsImageRenderer(size: CGSize(width: 22, height: 22)).image { _ in
         let seal = UIBezierPath()
         for index in 0 ..< 32 {
@@ -30,9 +38,9 @@ public func ayuGramOwnerBadgeImage() -> UIImage {
             if index == 0 { seal.move(to: point) } else { seal.addLine(to: point) }
         }
         seal.close()
-        UIColor(red: 0.56, green: 0.38, blue: 0.95, alpha: 1).setFill()
+        fill.setFill()
         seal.fill()
-        ayuPlane(CGRect(x: 4.5, y: 4.2, width: 13, height: 13), foreground: .white, secondary: UIColor(red: 0.85, green: 0.77, blue: 1, alpha: 1))
+        ayuPlane(CGRect(x: 4.5, y: 4.2, width: 13, height: 13), foreground: .white, secondary: secondary)
     }
 }
 
@@ -182,4 +190,144 @@ public func ayuGramMemberBadgeImage() -> UIImage {
         outline.stroke()
         ayuPlane(CGRect(x: 5, y: 4.5, width: 12, height: 13), foreground: .white, secondary: UIColor(red: 0.76, green: 0.65, blue: 1, alpha: 1))
     }
+}
+
+private func ayuHexColor(_ hex: String) -> UIColor {
+    var value: UInt64 = 0
+    Scanner(string: hex.trimmingCharacters(in: CharacterSet(charactersIn: "# "))).scanHexInt64(&value)
+    return UIColor(red: CGFloat((value >> 16) & 0xff) / 255.0, green: CGFloat((value >> 8) & 0xff) / 255.0, blue: CGFloat(value & 0xff) / 255.0, alpha: 1.0)
+}
+
+private var ayuCustomBadgeCache: [String: UIImage] = [:]
+private let ayuCustomBadgeLock = NSLock()
+
+public func ayuGramCustomBadgeImage(_ badge: AyuGramCustomBadge, size: CGFloat = 22.0) -> UIImage {
+    let key = "\(badge.symbol)|\(badge.emoji)|\(badge.shape)|\(badge.top)|\(badge.bottom)|\(badge.darkGlyph)|\(size)"
+    ayuCustomBadgeLock.lock()
+    let cached = ayuCustomBadgeCache[key]
+    ayuCustomBadgeLock.unlock()
+    if let cached {
+        return cached
+    }
+    let scale = size / 22.0
+    let top = ayuHexColor(badge.top)
+    let bottom = ayuHexColor(badge.bottom)
+    let image = UIGraphicsImageRenderer(size: CGSize(width: size, height: size)).image { context in
+        let rect = CGRect(x: 1.5 * scale, y: 1.5 * scale, width: 19.0 * scale, height: 19.0 * scale)
+        var path: UIBezierPath?
+        switch badge.shape {
+        case 1:
+            path = UIBezierPath(ovalIn: rect)
+        case 2:
+            let seal = UIBezierPath()
+            for index in 0 ..< 32 {
+                let angle = CGFloat(index) * .pi / 16.0 - .pi / 2.0
+                let radius = (index % 2 == 0 ? 10.8 : 9.6) * scale
+                let point = CGPoint(x: size / 2.0 + cos(angle) * radius, y: size / 2.0 + sin(angle) * radius)
+                if index == 0 { seal.move(to: point) } else { seal.addLine(to: point) }
+            }
+            seal.close()
+            path = seal
+        case 3:
+            path = nil
+        default:
+            path = UIBezierPath(roundedRect: rect, cornerRadius: 6.0 * scale)
+        }
+        if let path {
+            context.cgContext.saveGState()
+            path.addClip()
+            let colors = [top.cgColor, bottom.cgColor] as CFArray
+            if let gradient = CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(), colors: colors, locations: [0.0, 1.0]) {
+                context.cgContext.drawLinearGradient(gradient, start: CGPoint(x: 0.0, y: 0.0), end: CGPoint(x: 0.0, y: size), options: [])
+            }
+            context.cgContext.restoreGState()
+        }
+        let glyphColor: UIColor = path == nil ? top : (badge.darkGlyph ? UIColor(white: 0.08, alpha: 1.0) : .white)
+        let emoji = badge.emoji.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !emoji.isEmpty {
+            let font = UIFont.systemFont(ofSize: (path == nil ? 17.0 : 12.5) * scale)
+            let text = NSAttributedString(string: String(emoji.prefix(2)), attributes: [.font: font])
+            let bounds = text.boundingRect(with: CGSize(width: size * 2.0, height: size * 2.0), options: [.usesLineFragmentOrigin], context: nil)
+            text.draw(at: CGPoint(x: (size - bounds.width) / 2.0, y: (size - bounds.height) / 2.0))
+        } else if !badge.symbol.isEmpty {
+            let pointSize = (path == nil ? 16.0 : 11.0) * scale
+            if let symbol = UIImage(systemName: badge.symbol, withConfiguration: UIImage.SymbolConfiguration(pointSize: pointSize, weight: .bold))?.withTintColor(glyphColor, renderingMode: .alwaysOriginal) {
+                let symbolSize = symbol.size
+                symbol.draw(in: CGRect(x: (size - symbolSize.width) / 2.0, y: (size - symbolSize.height) / 2.0, width: symbolSize.width, height: symbolSize.height))
+            }
+        }
+    }
+    ayuCustomBadgeLock.lock()
+    if ayuCustomBadgeCache.count > 400 {
+        ayuCustomBadgeCache.removeAll()
+    }
+    ayuCustomBadgeCache[key] = image
+    ayuCustomBadgeLock.unlock()
+    return image
+}
+
+public func ayuGramBadgeImage(kind: String?, peerId: Int64) -> UIImage {
+    switch kind {
+    case "member":
+        return ayuGramMemberBadgeImage()
+    case "supporter":
+        if let badge = AyuGramClientBadges.shared.supporterBadge(peerId: peerId) {
+            return ayuGramCustomBadgeImage(badge)
+        }
+        return ayuGramMemberBadgeImage()
+    case "updates", "peek":
+        return ayuGramChannelBadgeImage()
+    default:
+        return ayuGramOwnerBadgeImage()
+    }
+}
+
+private weak var ayuBadgeToastView: UIView?
+
+public func ayuGramShowBadgeToast(markdown: String, from view: UIView) {
+    guard let window = view.window else {
+        return
+    }
+    ayuBadgeToastView?.removeFromSuperview()
+    let text = NSMutableAttributedString()
+    let regular = UIFont.systemFont(ofSize: 14.0)
+    let bold = UIFont.systemFont(ofSize: 14.0, weight: .semibold)
+    for (index, part) in markdown.components(separatedBy: "**").enumerated() where !part.isEmpty {
+        text.append(NSAttributedString(string: part, attributes: [.font: index % 2 == 1 ? bold : regular, .foregroundColor: UIColor.white]))
+    }
+    let container = UIView()
+    container.backgroundColor = UIColor(white: 0.12, alpha: 0.96)
+    container.layer.cornerRadius = 14.0
+    container.layer.cornerCurve = .continuous
+    container.layer.shadowColor = UIColor.black.cgColor
+    container.layer.shadowOpacity = 0.25
+    container.layer.shadowRadius = 12.0
+    container.layer.shadowOffset = CGSize(width: 0.0, height: 4.0)
+    container.isUserInteractionEnabled = false
+    let icon = UIImageView(image: ayuGramOwnerBadgeImage())
+    let label = UILabel()
+    label.numberOfLines = 0
+    label.attributedText = text
+    container.addSubview(icon)
+    container.addSubview(label)
+    let width = min(window.bounds.width - 24.0, 420.0)
+    let labelSize = label.sizeThatFits(CGSize(width: width - 56.0, height: 200.0))
+    let height = max(48.0, ceil(labelSize.height) + 24.0)
+    icon.frame = CGRect(x: 14.0, y: (height - 22.0) / 2.0, width: 22.0, height: 22.0)
+    label.frame = CGRect(x: 46.0, y: (height - ceil(labelSize.height)) / 2.0, width: width - 56.0, height: ceil(labelSize.height))
+    container.frame = CGRect(x: (window.bounds.width - width) / 2.0, y: window.bounds.height - window.safeAreaInsets.bottom - height - 70.0, width: width, height: height)
+    window.addSubview(container)
+    ayuBadgeToastView = container
+    container.alpha = 0.0
+    container.transform = CGAffineTransform(translationX: 0.0, y: 16.0)
+    UIView.animate(withDuration: 0.35, delay: 0.0, usingSpringWithDamping: 0.8, initialSpringVelocity: 0.0, options: [], animations: {
+        container.alpha = 1.0
+        container.transform = .identity
+    }, completion: { _ in
+        UIView.animate(withDuration: 0.3, delay: 3.2, options: [], animations: {
+            container.alpha = 0.0
+        }, completion: { _ in
+            container.removeFromSuperview()
+        })
+    })
 }

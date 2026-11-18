@@ -1,6 +1,11 @@
+import { badgeStorage } from './badges.js';
 const INSTALL_TTL_MS = 60 * 24 * 60 * 60 * 1000;
 const REPORT_TTL_MS = 180 * 24 * 60 * 60 * 1000;
 const REPORTS_PER_DAY = 5;
+const REPORTS_PER_IP = 8;
+const REPORTS_PER_DAY_TOTAL = 300;
+const NEW_INSTALLS_PER_IP = 12;
+const NEW_INSTALLS_PER_DAY = 20000;
 const MAX_BODY = 4096;
 const MAX_ATTACHMENTS = 5;
 const ATTACH_TTL_MS = 2 * 60 * 60 * 1000;
@@ -71,9 +76,28 @@ export function copyReasonCode(value) {
   return COPY_REASONS.some(([code]) => code === value) ? value : 'other';
 }
 
-export function reasonLabel(code) {
+export function reasonNote(value) {
+  return text(value, 400).replace(/\s+/g, ' ').trim().slice(0, 200);
+}
+
+export function reasonLabel(code, note) {
+  if (note) {
+    return note;
+  }
   const found = [...BAN_REASONS, ...COPY_REASONS].find(([value]) => value === code);
   return found ? found[1] : 'Без причины';
+}
+
+function reasonRecord(code, params) {
+  const note = reasonNote(params.get('note'));
+  return note ? { reason: 'custom', note } : { reason: code(params.get('reason')) };
+}
+
+function shownReason(value) {
+  if (value && value.note) {
+    return value.note;
+  }
+  return value && value.reason && value.reason !== 'other' && value.reason !== 'custom' ? value.reason : null;
 }
 const COPIES_PER_DAY = 20;
 const COPY_TTL_MS = 365 * 24 * 60 * 60 * 1000;
@@ -168,6 +192,10 @@ async function shortHash(value) {
   return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, '0')).join('').slice(0, 12);
 }
 
+export async function reporterTag(id) {
+  return (await shortHash('ayugram-reporter|' + id)).slice(0, 6).toUpperCase();
+}
+
 export function cleanReport(body, country, now) {
   if (!body || typeof body !== 'object') {
     return null;
@@ -256,13 +284,50 @@ export class Stats {
     this.state = state;
   }
 
+  async allowIp(request, prefix, perIp, total, now) {
+    const storage = this.state.storage;
+    const day = Math.floor(now / 86400000);
+    if ((await storage.get('limday')) !== day) {
+      for (const old of ['pip:', 'rip:', 'pall:', 'rall:', 'l:']) {
+        const keys = [...(await storage.list({ prefix: old })).keys()].filter((key) => !key.endsWith(':' + day));
+        for (let index = 0; index < keys.length; index += 128) {
+          await storage.delete(keys.slice(index, index + 128));
+        }
+      }
+      await storage.put('limday', day);
+    }
+    const allKey = prefix[0] + 'all:' + day;
+    const all = (await storage.get(allKey)) || 0;
+    if (all >= total) {
+      return false;
+    }
+    const tag = request.headers.get('x-ayugram-ip') || '';
+    if (/^[0-9a-f]{24}$/.test(tag)) {
+      const ipKey = prefix + ':' + tag + ':' + day;
+      const own = (await storage.get(ipKey)) || 0;
+      if (own >= perIp) {
+        return false;
+      }
+      await storage.put(ipKey, own + 1);
+    }
+    await storage.put(allKey, all + 1);
+    return true;
+  }
+
   async fetch(request) {
     const url = new URL(request.url);
     const storage = this.state.storage;
     const now = Date.now();
+    const badge = await badgeStorage(storage, request, url, now);
+    if (badge) {
+      return badge;
+    }
     if (request.method === 'POST' && url.pathname === '/ping') {
       const install = await request.json();
       const previous = await storage.get('i:' + install.id);
+      if (!previous && !(await this.allowIp(request, 'pip', NEW_INSTALLS_PER_IP, NEW_INSTALLS_PER_DAY, now))) {
+        return new Response('limit\n', { status: 429 });
+      }
       install.first = previous && previous.first ? previous.first : install.seen;
       await storage.put('i:' + install.id, install);
       return new Response('ok\n');
@@ -283,8 +348,8 @@ export class Stats {
       let banReason = null;
       for (const hash of cleanAccounts(body.accounts)) {
         const ban = await storage.get('ban:' + hash);
-        if (ban && ban.reason && ban.reason !== 'other') {
-          banReason = ban.reason;
+        if (shownReason(ban)) {
+          banReason = shownReason(ban);
         }
       }
       const check = body.check || null;
@@ -298,8 +363,8 @@ export class Stats {
           for (const value of found.values()) {
             if (value) {
               blocked = true;
-              if (value.reason && value.reason !== 'other') {
-                blockReason = value.reason;
+              if (shownReason(value)) {
+                blockReason = shownReason(value);
               }
             }
           }
@@ -311,6 +376,15 @@ export class Stats {
       }
       return Response.json({ banned, warning: warning ? warning.id : null, blocked, banReason: banned ? banReason : null, blockReason: blocked ? blockReason : null, notify });
     }
+    if (request.method === 'POST' && url.pathname === '/pending') {
+      await storage.put('pend', { ...(await request.json()), time: now });
+      return new Response('ok\n');
+    }
+    if (request.method === 'POST' && url.pathname === '/pending/take') {
+      const pending = await storage.get('pend');
+      await storage.delete('pend');
+      return Response.json(pending && now - pending.time < 15 * 60 * 1000 ? pending : null);
+    }
     if (request.method === 'GET' && url.pathname === '/bans') {
       return Response.json(await this.bans());
     }
@@ -321,7 +395,7 @@ export class Stats {
       }
       const hash = await accountHash(id);
       if (action === 'ban') {
-        await storage.put('ban:' + hash, { time: now, id, reason: banReasonCode(url.searchParams.get('reason')) });
+        await storage.put('ban:' + hash, { time: now, id, ...reasonRecord(banReasonCode, url.searchParams) });
       } else if (action === 'unban') {
         await storage.delete('ban:' + hash);
       } else {
@@ -351,9 +425,9 @@ export class Stats {
       }
       if (action === 'block') {
         const entries = {};
-        const reason = copyReasonCode(url.searchParams.get('reason'));
+        const reason = reasonRecord(copyReasonCode, url.searchParams);
         for (const key of keys) {
-          entries[key] = { time: now, cid, reason };
+          entries[key] = { time: now, cid, ...reason };
         }
         await storage.put(entries);
       } else if (action === 'unblock') {
@@ -380,7 +454,7 @@ export class Stats {
       if (action === 'warn') {
         await storage.put('warn:' + hash, { id: rid + '-' + now, time: now, rid });
       } else if (action === 'ban') {
-        await storage.put('ban:' + hash, { time: now, rid, reason: banReasonCode(url.searchParams.get('reason')) });
+        await storage.put('ban:' + hash, { time: now, rid, ...reasonRecord(banReasonCode, url.searchParams) });
       } else if (action === 'unban') {
         await storage.delete('ban:' + hash);
       } else {
@@ -394,6 +468,9 @@ export class Stats {
       const limitKey = 'l:' + report.id + ':' + day;
       const count = (await storage.get(limitKey)) || 0;
       if (count >= REPORTS_PER_DAY) {
+        return new Response('limit\n', { status: 429 });
+      }
+      if (!(await this.allowIp(request, 'rip', REPORTS_PER_IP, REPORTS_PER_DAY_TOTAL, now))) {
         return new Response('limit\n', { status: 429 });
       }
       await storage.put(limitKey, count + 1);
@@ -509,19 +586,19 @@ export class Stats {
       const key = value && value.rid ? await storage.get('q:' + value.rid) : null;
       const report = key ? await storage.get(key) : null;
       const id = (value && value.id) || (report ? report.target : '');
-      accounts.push({ rid: (value && value.rid) || '', id, name: report && report.targetName ? report.targetName : (id ? 'ID ' + id : ''), time: value ? value.time : 0, reason: (value && value.reason) || 'other' });
+      accounts.push({ rid: (value && value.rid) || '', id, name: report && report.targetName ? report.targetName : (id ? 'ID ' + id : ''), time: value ? value.time : 0, reason: (value && value.reason) || 'other', note: (value && value.note) || '' });
     }
     accounts.sort((a, b) => b.time - a.time);
     const seen = new Map();
     for (const [, value] of await storage.list({ prefix: 'blk:' })) {
       if (value && value.cid && !seen.has(value.cid)) {
-        seen.set(value.cid, { time: value.time, reason: value.reason || 'other' });
+        seen.set(value.cid, { time: value.time, reason: value.reason || 'other', note: value.note || '' });
       }
     }
     const copies = [];
-    for (const [cid, { time, reason }] of seen) {
+    for (const [cid, { time, reason, note }] of seen) {
       const record = await storage.get('c:' + cid);
-      copies.push({ cid, kind: record ? record.kind : '', repo: record ? record.repo : '', team: record && record.details ? record.details.team : '', time, reason });
+      copies.push({ cid, kind: record ? record.kind : '', repo: record ? record.repo : '', team: record && record.details ? record.details.team : '', time, reason, note });
     }
     copies.sort((a, b) => b.time - a.time);
     return { accounts, copies };
@@ -541,7 +618,7 @@ export class Stats {
     const blockedBy = keys.filter(([key]) => found.get(key)).map(([, label]) => label);
     const firstBlock = keys.map(([key]) => found.get(key)).find(Boolean);
     const { installs, ...rest } = record;
-    return { record: rest, installs: installs.length, blockable: keys.map(([, label]) => label), blockedBy, blockReason: firstBlock ? firstBlock.reason || 'other' : null };
+    return { record: rest, installs: installs.length, blockable: keys.map(([, label]) => label), blockedBy, blockReason: firstBlock ? firstBlock.reason || 'other' : null, blockNote: firstBlock ? firstBlock.note || '' : '' };
   }
 
   async review(rid) {
@@ -577,12 +654,36 @@ export class Stats {
       };
     }
     let reporterInstall = null;
+    const reporterAccounts = reporter ? reporter.accounts || [] : [];
     if (reporter) {
       const { id, accounts, ...rest } = reporter;
       reporterInstall = rest;
     }
+    const history = [];
+    for (const [, value] of await storage.list({ prefix: 'r:' })) {
+      if (value && value.id === report.id) {
+        history.push({ rid: value.rid, time: value.time, targetName: value.targetName || '', target: value.target || '' });
+      }
+    }
+    history.sort((a, b) => b.time - a.time);
+    let reporterBanned = false;
+    for (const hash of reporterAccounts) {
+      if (await storage.get('ban:' + hash)) {
+        reporterBanned = true;
+      }
+    }
+    const profile = {
+      tag: await reporterTag(report.id),
+      reports: history.length,
+      others: history.filter((item) => item.rid !== report.rid).slice(0, 5),
+      accounts: reporterAccounts.length,
+      banned: reporterBanned,
+      self: Boolean(target && reporterAccounts.includes(target.hash)),
+    };
     const { id, ...publicReport } = report;
-    return { report: publicReport, reporter: reporterInstall, target };
+    publicReport.tag = profile.tag;
+    publicReport.reports = profile.reports;
+    return { report: publicReport, reporter: reporterInstall, target, profile };
   }
 }
 
@@ -602,7 +703,17 @@ async function readBody(request) {
   }
 }
 
-function sameToken(a, b) {
+export async function ipTag(ip) {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode('ayugram-ip|' + ip));
+  return [...new Uint8Array(digest).slice(0, 12)].map((byte) => byte.toString(16).padStart(2, '0')).join('');
+}
+
+async function forwardHeaders(request) {
+  const ip = request.headers.get('cf-connecting-ip') || '';
+  return ip ? { 'x-ayugram-ip': await ipTag(ip) } : {};
+}
+
+export function sameToken(a, b) {
   if (typeof a !== 'string' || typeof b !== 'string' || a.length !== b.length || !a) {
     return false;
   }
@@ -622,6 +733,9 @@ export function reportMessage(report) {
     lines.push('На кого: ' + (report.targetName || '-') + (report.target ? ' (ID ' + report.target + ')' : ''));
   }
   lines.push(['Сборка ' + (report.build || '?'), report.status, report.source, report.country].join(' · '));
+  if (report.tag) {
+    lines.push('Жалобщик: #' + report.tag + (report.reports > 1 ? ' · жалоб: ' + report.reports : ''));
+  }
   if (report.team) {
     lines.push('Сертификат: ' + report.team + (report.teamName ? ' (' + report.teamName + ')' : ''));
   }
@@ -660,7 +774,7 @@ export function copyMessage(copy) {
   lines.push('');
   if (copy.blockedBy && copy.blockedBy.length) {
     lines.push('Статус: ⛔ заблокирована по ' + copy.blockedBy.join(', '));
-    lines.push('Причина: ' + reasonLabel(copy.blockReason));
+    lines.push('Причина: ' + reasonLabel(copy.blockReason, copy.blockNote));
   } else if (copy.blockable && copy.blockable.length) {
     lines.push('Статус: работает. Блок сработает по ' + copy.blockable.join(', '));
   } else {
@@ -746,6 +860,30 @@ async function forwardAttachment(env, kind, extension, type, bytes, info) {
   return (await send(kind === 'photo' ? 'sendPhoto' : 'sendVideo', kind)) || send('sendDocument', 'document');
 }
 
+let moderationKeyPromise = null;
+
+function moderationKey(env) {
+  if (!env || !env.MODERATION_KEY) {
+    return null;
+  }
+  if (!moderationKeyPromise) {
+    const der = Uint8Array.from(atob(env.MODERATION_KEY.trim()), (ch) => ch.charCodeAt(0));
+    moderationKeyPromise = crypto.subtle.importKey('pkcs8', der, 'Ed25519', false, ['sign']).catch(() => null);
+  }
+  return moderationKeyPromise;
+}
+
+async function moderationSignature(env, id, banned, blocked, now) {
+  const key = env && env.MODERATION_KEY ? await moderationKey(env) : null;
+  if (!key) {
+    return null;
+  }
+  const ts = Math.floor(now / 1000);
+  const message = new TextEncoder().encode('ayugram-mod|' + id + '|' + (banned ? 1 : 0) + '|' + (blocked ? 1 : 0) + '|' + ts);
+  const signature = new Uint8Array(await crypto.subtle.sign('Ed25519', key, message));
+  return { ts, sig: btoa(String.fromCharCode(...signature)) };
+}
+
 export async function handleStats(request, env, url, ctx) {
   const stub = statsStub(env);
   if (!stub) {
@@ -758,17 +896,18 @@ export async function handleStats(request, env, url, ctx) {
     if (!install) {
       return new Response('bad request\n', { status: 400 });
     }
-    return stub.fetch('https://stats.ayugram.invalid/ping', { method: 'POST', body: JSON.stringify(install) });
+    return stub.fetch('https://stats.ayugram.invalid/ping', { method: 'POST', headers: await forwardHeaders(request), body: JSON.stringify(install) });
   }
   if (request.method === 'POST' && url.pathname === '/stats/report') {
     const report = cleanReport(await readBody(request), country, now);
     if (!report) {
       return new Response('bad request\n', { status: 400 });
     }
-    const response = await stub.fetch('https://stats.ayugram.invalid/report', { method: 'POST', body: JSON.stringify(report) });
+    const response = await stub.fetch('https://stats.ayugram.invalid/report', { method: 'POST', headers: await forwardHeaders(request), body: JSON.stringify(report) });
     if (response.ok) {
       const stored = await response.clone().json().catch(() => ({}));
       report.rid = stored.rid || '';
+      report.tag = await reporterTag(report.id);
       const notify = notifyReport(report, env).catch((error) => console.log('report not sent to Telegram: ' + error));
       if (ctx && typeof ctx.waitUntil === 'function') {
         ctx.waitUntil(notify);
@@ -815,6 +954,11 @@ export async function handleStats(request, env, url, ctx) {
       return response;
     }
     const { notify, ...result } = await response.json();
+    const signed = await moderationSignature(env, text(body.id, 64), result.banned, result.blocked, now);
+    if (signed) {
+      result.ts = signed.ts;
+      result.sig = signed.sig;
+    }
     if (notify) {
       const sent = notifyCopy(notify, env).catch((error) => console.log('copy not sent to Telegram: ' + error));
       if (ctx && typeof ctx.waitUntil === 'function') {

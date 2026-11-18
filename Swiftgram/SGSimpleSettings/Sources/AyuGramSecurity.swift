@@ -158,6 +158,9 @@ public final class AyuGramSecurity {
     private let installIdKey = "ayugram.stats.id"
     private let accountsKey = "ayugram.stats.accounts"
     private let banKey = "ayugram.moderation.banned"
+    private let banVerifiedKey = "ayugram.moderation.banverified"
+    private let blockVerifiedKey = "ayugram.moderation.blockverified"
+    private let modTsKey = "ayugram.moderation.ts"
     private let warningSeenKey = "ayugram.moderation.warning"
     private var lastModerationCheck: Date?
     private var currentWarning: String?
@@ -245,20 +248,33 @@ public final class AyuGramSecurity {
         return UserDefaults.standard.bool(forKey: self.banKey)
     }
 
+    public static let moderationPublicKey: [UInt8] = [65, 233, 236, 154, 181, 70, 184, 86, 220, 26, 24, 9, 43, 62, 1, 212, 18, 138, 78, 120, 115, 95, 11, 22, 31, 63, 184, 70, 121, 188, 94, 143]
+
     public static let reasonCodes: Set<String> = ["scam", "resale", "abuse", "testflight", "modified", "fork"]
 
-    public var banReason: String? {
-        guard self.isBanned, let reason = UserDefaults.standard.string(forKey: self.banReasonKey), AyuGramSecurity.reasonCodes.contains(reason) else {
+    public static func reasonText(_ value: String?) -> String? {
+        guard let value else {
             return nil
         }
-        return reason
+        let cleaned = value.components(separatedBy: .whitespacesAndNewlines).filter({ !$0.isEmpty }).joined(separator: " ")
+        guard !cleaned.isEmpty, cleaned != "other", cleaned != "custom" else {
+            return nil
+        }
+        return String(cleaned.prefix(200))
+    }
+
+    public var banReason: String? {
+        guard self.isBanned else {
+            return nil
+        }
+        return AyuGramSecurity.reasonText(UserDefaults.standard.string(forKey: self.banReasonKey))
     }
 
     public var blockReason: String? {
-        guard UserDefaults.standard.bool(forKey: self.flagsKey), let reason = UserDefaults.standard.string(forKey: self.blockReasonKey), AyuGramSecurity.reasonCodes.contains(reason) else {
+        guard UserDefaults.standard.bool(forKey: self.flagsKey) else {
             return nil
         }
-        return reason
+        return AyuGramSecurity.reasonText(UserDefaults.standard.string(forKey: self.blockReasonKey))
     }
 
     public var pendingWarning: String? {
@@ -337,6 +353,23 @@ public final class AyuGramSecurity {
         return body
     }
 
+    private func moderationTrusted(object: [String: Any]) -> Bool {
+        guard let ts = object["ts"] as? Int, let signatureText = object["sig"] as? String, let signature = Data(base64Encoded: signatureText) else {
+            return false
+        }
+        let banned = (object["banned"] as? Bool) ?? false
+        let blocked = (object["blocked"] as? Bool) ?? false
+        let message = "ayugram-mod|\(self.installId)|\(banned ? 1 : 0)|\(blocked ? 1 : 0)|\(ts)"
+        guard let key = try? Curve25519.Signing.PublicKey(rawRepresentation: Data(AyuGramSecurity.moderationPublicKey)), key.isValidSignature(signature, for: Data(message.utf8)) else {
+            return false
+        }
+        guard ts > UserDefaults.standard.integer(forKey: self.modTsKey) else {
+            return false
+        }
+        UserDefaults.standard.set(ts, forKey: self.modTsKey)
+        return true
+    }
+
     public func refreshModeration(force: Bool = false) {
         self.lock.lock()
         if !force, let last = self.lastModerationCheck, Date().timeIntervalSince(last) < 600.0 {
@@ -358,14 +391,40 @@ public final class AyuGramSecurity {
             guard error == nil, (response as? HTTPURLResponse)?.statusCode == 200, let data, let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
                 return
             }
+            let trusted = self.moderationTrusted(object: object)
             let banned = (object["banned"] as? Bool) ?? false
-            var changed = UserDefaults.standard.bool(forKey: self.banKey) != banned
-            UserDefaults.standard.set(banned, forKey: self.banKey)
-            if let blocked = object["blocked"] as? Bool {
-                if UserDefaults.standard.bool(forKey: self.flagsKey) != blocked {
+            var changed = false
+            if banned {
+                if !UserDefaults.standard.bool(forKey: self.banKey) {
                     changed = true
                 }
-                UserDefaults.standard.set(blocked, forKey: self.flagsKey)
+                UserDefaults.standard.set(true, forKey: self.banKey)
+                if trusted {
+                    UserDefaults.standard.set(true, forKey: self.banVerifiedKey)
+                }
+            } else if trusted || !UserDefaults.standard.bool(forKey: self.banVerifiedKey) {
+                if UserDefaults.standard.bool(forKey: self.banKey) {
+                    changed = true
+                }
+                UserDefaults.standard.set(false, forKey: self.banKey)
+                UserDefaults.standard.set(false, forKey: self.banVerifiedKey)
+            }
+            if let blocked = object["blocked"] as? Bool {
+                if blocked {
+                    if UserDefaults.standard.bool(forKey: self.flagsKey) != blocked {
+                        changed = true
+                    }
+                    UserDefaults.standard.set(true, forKey: self.flagsKey)
+                    if trusted {
+                        UserDefaults.standard.set(true, forKey: self.blockVerifiedKey)
+                    }
+                } else if trusted || !UserDefaults.standard.bool(forKey: self.blockVerifiedKey) {
+                    if UserDefaults.standard.bool(forKey: self.flagsKey) {
+                        changed = true
+                    }
+                    UserDefaults.standard.set(false, forKey: self.flagsKey)
+                    UserDefaults.standard.set(false, forKey: self.blockVerifiedKey)
+                }
             }
             for (field, key) in [("banReason", self.banReasonKey), ("blockReason", self.blockReasonKey)] {
                 let reason = object[field] as? String
@@ -596,6 +655,12 @@ public final class AyuGramSecurity {
     public static func compare(local: [String: String], remote: [String: String]) -> AyuGramBuildStatus {
         if local.isEmpty || remote.isEmpty {
             return .modified
+        }
+        let executable = (Bundle.main.infoDictionary?["CFBundleExecutable"] as? String) ?? ""
+        if !executable.isEmpty {
+            guard let localExecutable = local[executable], let remoteExecutable = remote[executable], localExecutable == remoteExecutable else {
+                return .modified
+            }
         }
         for (image, hash) in local {
             guard let expected = remote[image], expected == hash else {

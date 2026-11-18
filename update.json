@@ -1,11 +1,8 @@
 {
-  "build": 211501,
-  "version": "13.2 (211501)",
-  "url": "https://t.me/ayugramiosupdates",
-  "ipa": {
-    "standard": "https://github.com/mapix3/AyuGram-iOS/releases/download/build-211501/AyuGram-standard-211501.ipa",
-    "custom": "https://github.com/mapix3/AyuGram-iOS/releases/download/build-211501/AyuGram-custom-211501.ipa"
-  },
+  "build": 0,
+  "version": "0",
+  "url": "https://github.com/Xitaoyou/AyuGram-iOS-Swiftgram/releases",
+  "ipa": {},
   "block": {
     "teams": [],
     "builds": []

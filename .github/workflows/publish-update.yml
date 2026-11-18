@@ -66,7 +66,7 @@ jobs:
           manifest = {
               'build': int(os.environ['BUILD']),
               'version': '%s (%s)' % (os.environ['VERSION'], os.environ['BUILD']),
-              'url': 'https://t.me/ayugramiosupdates',
+              'url': 'https://github.com/%s/releases/tag/build-%s' % (os.environ['GITHUB_REPOSITORY'], os.environ['BUILD']),
               'ipa': {variant: base + 'AyuGram-%s-%s.ipa' % (variant, os.environ['BUILD']) for variant in ('standard', 'custom')},
           }
           # The block list for scam copies is edited by hand and survives publishing.

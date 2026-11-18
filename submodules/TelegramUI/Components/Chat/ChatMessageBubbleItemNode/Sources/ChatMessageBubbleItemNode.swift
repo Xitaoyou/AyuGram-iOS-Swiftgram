@@ -2401,6 +2401,7 @@ public class ChatMessageBubbleItemNode: ChatMessageItemView, ChatMessagePreviewI
         let ayuBadge = effectiveAuthor.flatMap { $0.id.namespace == Namespaces.Peer.CloudUser ? AyuGramClientBadges.shared.badge(peerId: $0.id.toInt64()) : nil }
         let ayuOwner = ayuBadge != nil
         let ayuMember = ayuBadge == "member"
+        let ayuBadgeImage = ayuGramBadgeImage(kind: ayuBadge, peerId: effectiveAuthor.flatMap({ $0.id.namespace == Namespaces.Peer.CloudUser ? $0.id.toInt64() : nil }) ?? 0)
         if let author = effectiveAuthor, author.id.namespace == Namespaces.Peer.CloudUser {
             AyuGramClientBadges.shared.observe(peerId: author.id.toInt64(), accountId: item.context.account.peerId.toInt64())
         }
@@ -4362,6 +4363,7 @@ public class ChatMessageBubbleItemNode: ChatMessageItemView, ChatMessagePreviewI
                 layoutConstants: layoutConstants,
                 ayuOwner: ayuOwner,
                 ayuMember: ayuMember,
+                ayuBadgeImage: ayuBadgeImage,
                 currentCredibilityIcon: currentCredibilityIcon,
                 authorVerificationIcon: authorVerificationIcon,
                 rankBadgeNodeSizeApply: rankBadgeNodeSizeApply,
@@ -4448,6 +4450,7 @@ public class ChatMessageBubbleItemNode: ChatMessageItemView, ChatMessagePreviewI
         layoutConstants: ChatMessageItemLayoutConstants,
         ayuOwner: Bool,
         ayuMember: Bool,
+        ayuBadgeImage: UIImage,
         currentCredibilityIcon: (EmojiStatusComponent.Content, UIColor?)?,
         authorVerificationIcon: EmojiStatusComponent.Content?,
         rankBadgeNodeSizeApply: (CGSize, () -> TextNode?, UIColor?),
@@ -4491,7 +4494,7 @@ public class ChatMessageBubbleItemNode: ChatMessageItemView, ChatMessagePreviewI
             return
         }
         
-        strongSelf.ayuOwnerBadge.image = ayuMember ? ayuGramMemberBadgeImage() : ayuGramOwnerBadgeImage()
+        strongSelf.ayuOwnerBadge.image = ayuBadgeImage
         strongSelf.ayuOwnerBadge.isHidden = true
         strongSelf.currentInputParams = inputParams
         strongSelf.currentApplyParams = applyInfo

@@ -1,4 +1,6 @@
 // MARK: Swiftgram
+import ChatListUI
+import BrowserUI
 import StoreKit
 import SGIAP
 import SGAPI
@@ -1489,6 +1491,22 @@ private func extractAccountManagerState(records: AccountRecordsView<TelegramAcco
                     print("Launch to ready took \((CFAbsoluteTimeGetCurrent() - launchStartTime) * 1000.0) ms")
                     // AyuGram: offer a newer build once the interface is up.
                     ayuGramPresentUpdateIfNeeded(context: context.context)
+                    ayuGramOpenWebSearch = { context, query in
+                        guard let navigationController = context.sharedContext.mainWindow?.viewController as? NavigationController else {
+                            return
+                        }
+                        guard let url = AyuGramSearchEngine.current.url(query: query) else {
+                            return
+                        }
+                        navigationController.view.endEditing(true)
+                        navigationController.pushViewController(BrowserScreen(context: context, subject: .webPage(url: url)))
+                    }
+                    ayuGramOpenAssistant = { context in
+                        guard let navigationController = context.sharedContext.mainWindow?.viewController as? NavigationController else {
+                            return
+                        }
+                        navigationController.pushViewController(ayuGramAssistantController(context: context))
+                    }
                     ayuGramArmTamperWatchdog()
 
                     self.mainWindow.debugAction = nil
@@ -1720,8 +1738,6 @@ private func extractAccountManagerState(records: AccountRecordsView<TelegramAcco
                 strongSelf.mainWindow.setProximityDimHidden(!value)
             }
         }
-        
-        self.maybeCheckForUpdates()
         
         if #available(iOS 13.0, *) {
             let cleanupTaskId = "\(baseAppBundleId).cleanup"
@@ -2250,8 +2266,6 @@ private func extractAccountManagerState(records: AccountRecordsView<TelegramAcco
         self.isActivePromise.set(true)
 
         self.resetBadge()
-        
-        self.maybeCheckForUpdates()
         
         SharedDisplayLinkDriver.shared.updateForegroundState(self.isActiveValue)
         

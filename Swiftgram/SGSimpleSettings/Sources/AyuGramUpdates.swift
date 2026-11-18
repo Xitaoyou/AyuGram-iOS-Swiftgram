@@ -13,7 +13,7 @@ public struct AyuGramUpdateInfo: Equatable {
 public final class AyuGramUpdates {
     public static let shared = AyuGramUpdates()
     public static let didChange = Notification.Name("AyuGram.Updates.didChange")
-    public static let manifestURL = URL(string: "https://raw.githubusercontent.com/mapix3/AyuGram-iOS/standard/update.json")!
+    public static let manifestURL = URL(string: "https://raw.githubusercontent.com/Xitaoyou/AyuGram-iOS-Swiftgram/standard/update.json")!
     public static let channelURL = "https://t.me/ayugramiosupdates"
     public static let developerId: Int64 = 1272887902
     /// Id of the chat list notice that announces an update.
@@ -46,16 +46,23 @@ public final class AyuGramUpdates {
         NotificationCenter.default.post(name: Self.didChange, object: self)
     }
 
-    /// Parses the manifest; only https links are accepted.
+    private static func isOwnReleaseURL(_ value: String) -> Bool {
+        guard let components = URLComponents(string: value), components.scheme == "https", components.host?.lowercased() == "github.com", components.user == nil, components.password == nil, components.port == nil else {
+            return false
+        }
+        return components.path.hasPrefix("/Xitaoyou/AyuGram-iOS-Swiftgram/releases/")
+    }
+
+    /// Never offer an upstream or third-party build from an old manifest.
     public static func parse(_ data: Data, currentBuild: Int) -> AyuGramUpdateInfo? {
         guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let build = (object["build"] as? Int) ?? (object["build"] as? String).flatMap(Int.init),
               build > currentBuild,
-              let url = object["url"] as? String, url.hasPrefix("https://") else { return nil }
+              let url = object["url"] as? String, isOwnReleaseURL(url) else { return nil }
         let version = (object["version"] as? String) ?? String(build)
         var info = AyuGramUpdateInfo(build: build, version: version, url: url)
         if let ipa = object["ipa"] as? [String: String] {
-            info.ipa = ipa.filter { $0.value.hasPrefix("https://") }
+            info.ipa = ipa.filter { isOwnReleaseURL($0.value) }
         }
         return info
     }

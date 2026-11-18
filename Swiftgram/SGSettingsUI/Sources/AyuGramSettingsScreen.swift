@@ -7,12 +7,13 @@ import TelegramCore
 import TelegramPresentationData
 import PresentationDataUtils
 import ItemListUI
+import PromptUI
 import SGItemListUI
 import SGSimpleSettings
 import SGStrings
 
 private enum AyuScreenSection: Int32 {
-    case hero, ghost, hide, behavior, content, chats, history, transfer, client, update, security, support
+    case hero, ghost, hide, behavior, content, chats, history, transfer, video, client, update, security, support, assistant, donate
 }
 
 private enum AyuScreenToggle: Equatable {
@@ -21,11 +22,11 @@ private enum AyuScreenToggle: Equatable {
     case ignoreProtection, screenshots
     case history, premium
     case scheduleInGhost, disableAds, disableLinkWarning, disableGreeting, dimDeleted, repeatMessage, confirmStickers, confirmGifs, confirmRead
-    case anonymousStats
+    case anonymousStats, assistantBubble, disableLiquidGlass, chatCopilot
 }
 
 private enum AyuScreenLink: Equatable {
-    case history, appearance, update, checkUpdates, channel, developer, importChat, silentSending, sessionLog, buildInfo, reportScam
+    case history, appearance, update, checkUpdates, channel, developer, importChat, silentSending, sessionLog, buildInfo, reportScam, searchEngine, assistant, aiProvider, aiKey, aiModel, donate, aiLanguage, aiPersona, supporter, video
 }
 
 private enum AyuScreenTint: Equatable {
@@ -165,6 +166,19 @@ private func ayuScreenEntries(data: PresentationData, privacy: AyuGramPrivacySet
     entries.append(.toggle(id: 438, section: .chats, key: .confirmGifs, symbol: "play.rectangle.fill", tint: .purple, title: s("Ayu.ConfirmGifs"), subtitle: nil, value: extra.confirmGifs, enabled: true))
     entries.append(.footer(id: 439, section: .chats, text: s("Ayu.LocalOnly")))
 
+    let ai = AyuGramAssistantConfig.current
+    entries.append(.header(id: 440, section: .assistant, text: s("Ayu.AISection")))
+    entries.append(.link(id: 441, section: .assistant, link: .searchEngine, symbol: "magnifyingglass", tint: .blue, title: s("Ayu.SearchEngine"), label: AyuGramSearchEngine.current.title))
+    entries.append(.link(id: 442, section: .assistant, link: .assistant, symbol: "sparkles", tint: .purple, title: s("Ayu.Assistant"), label: ""))
+    entries.append(.toggle(id: 447, section: .assistant, key: .assistantBubble, symbol: "bubble.left.and.bubble.right.fill", tint: .pink, title: s("Ayu.AIBubble"), subtitle: nil, value: extra.assistantBubble, enabled: true))
+    entries.append(.toggle(id: 449, section: .assistant, key: .chatCopilot, symbol: "cloud.fill", tint: .blue, title: s("Ayu.CopilotToggle"), subtitle: nil, value: extra.chatCopilot, enabled: true))
+    entries.append(.link(id: 443, section: .assistant, link: .aiProvider, symbol: "server.rack", tint: .teal, title: s("Ayu.AIProvider"), label: ai.provider.title))
+    entries.append(.link(id: 444, section: .assistant, link: .aiKey, symbol: "key.fill", tint: .orange, title: s("Ayu.AIKey"), label: ai.key.isEmpty ? s("Ayu.AIKeyNone") : "••••"))
+    entries.append(.link(id: 445, section: .assistant, link: .aiModel, symbol: "cpu", tint: .indigo, title: s("Ayu.AIModel"), label: ai.model))
+    entries.append(.link(id: 446, section: .assistant, link: .aiLanguage, symbol: "globe", tint: .green, title: s("Ayu.AILanguage"), label: AyuGramAssistantPreferences.language.isEmpty ? s("Ayu.AILanguageAuto") : AyuGramAssistantPreferences.language))
+    entries.append(.link(id: 450, section: .assistant, link: .aiPersona, symbol: "person.fill", tint: .purple, title: s("Ayu.AIPersona"), label: AyuGramAssistantPreferences.persona.isEmpty ? "" : "✓"))
+    entries.append(.footer(id: 448, section: .assistant, text: s("Ayu.AIFooter")))
+
     entries.append(.header(id: 500, section: .history, text: s("Ayu.History")))
     entries.append(.link(id: 520, section: .history, link: .history, symbol: "clock.fill", tint: .teal, title: s("Ayu.OpenHistory"), label: ""))
     entries.append(.footer(id: 530, section: .history, text: s("Ayu.HistoryInfo")))
@@ -173,10 +187,16 @@ private func ayuScreenEntries(data: PresentationData, privacy: AyuGramPrivacySet
     entries.append(.link(id: 560, section: .transfer, link: .importChat, symbol: "square.and.arrow.down.fill", tint: .green, title: s("Ayu.ImportChat"), label: ""))
     entries.append(.footer(id: 570, section: .transfer, text: s("Ayu.ImportChatFooter")))
 
+    entries.append(.header(id: 580, section: .video, text: s("Ayu.Video.Section")))
+    entries.append(.link(id: 585, section: .video, link: .video, symbol: "video.fill", tint: .orange, title: s("Ayu.Video.Title"), label: ""))
+    entries.append(.footer(id: 590, section: .video, text: s("Ayu.Video.SectionFooter")))
+
     entries.append(.header(id: 600, section: .client, text: s("Ayu.ClientSection")))
+    entries.append(.link(id: 605, section: .client, link: .supporter, symbol: "heart.circle.fill", tint: .red, title: s("Ayu.SupporterBadge"), label: ""))
     entries.append(.toggle(id: 610, section: .client, key: .premium, symbol: "star.fill", tint: .purple, title: s("Ayu.LocalPremium"), subtitle: s("Ayu.LocalPremiumInfo"), value: client.localPremium, enabled: true))
     if hasAppearance {
         entries.append(.link(id: 620, section: .client, link: .appearance, symbol: "paintbrush.fill", tint: .pink, title: data.strings.Appearance_Title, label: ""))
+        entries.append(.toggle(id: 630, section: .client, key: .disableLiquidGlass, symbol: "drop.fill", tint: .teal, title: s("Ayu.DisableLiquidGlass"), subtitle: s("Ayu.DisableLiquidGlassInfo"), value: extra.disableLiquidGlass, enabled: true))
     }
     entries.append(.footer(id: 650, section: .client, text: s("Ayu.LocalOnly")))
 
@@ -192,6 +212,10 @@ private func ayuScreenEntries(data: PresentationData, privacy: AyuGramPrivacySet
     entries.append(.link(id: 720, section: .support, link: .developer, symbol: "person.crop.circle.fill", tint: .purple, title: s("Ayu.SupportDeveloper"), label: ""))
     entries.append(.link(id: 730, section: .support, link: .sessionLog, symbol: "doc.text.fill", tint: .gray, title: s("Ayu.SessionLog"), label: ""))
     entries.append(.link(id: 740, section: .support, link: .checkUpdates, symbol: "arrow.triangle.2.circlepath", tint: .gray, title: s("Ayu.CheckUpdates"), label: ""))
+
+    entries.append(.header(id: 800, section: .donate, text: s("Ayu.DonateSection")))
+    entries.append(.link(id: 810, section: .donate, link: .donate, symbol: "heart.fill", tint: .pink, title: s("Ayu.Donate"), label: ""))
+    entries.append(.footer(id: 820, section: .donate, text: s("Ayu.DonateFooter")))
     return entries
 }
 
@@ -244,6 +268,12 @@ public func ayuGramSettingsScreen(context: AccountContext) -> ViewController {
         case .confirmGifs: settings.updateExtra { $0.confirmGifs = value }
         case .confirmRead: settings.updateExtra { $0.confirmReadReceipt = value }
         case .anonymousStats: settings.updateExtra { $0.anonymousStats = value }
+        case .assistantBubble: settings.updateExtra { $0.assistantBubble = value }
+        case .chatCopilot: settings.updateExtra { $0.chatCopilot = value }
+        case .disableLiquidGlass:
+            settings.updateExtra { $0.disableLiquidGlass = value }
+            let data = context.sharedContext.currentPresentationData.with { $0 }
+            presentController?(textAlertController(context: context, title: nil, text: i18n("Ayu.RestartToApply", data.strings.baseLanguageCode), actions: [TextAlertAction(type: .defaultAction, title: data.strings.Common_OK, action: {})]))
         }
     }, open: { link in
         switch link {
@@ -268,6 +298,8 @@ public func ayuGramSettingsScreen(context: AccountContext) -> ViewController {
             }
         case .channel:
             ayuGramOpenLink(context: context, url: AyuGramUpdates.channelURL)
+        case .donate:
+            pushController?(ayuGramDonateController(context: context))
         case .developer:
             ayuGramOpenDeveloper(context: context)
         case .sessionLog:
@@ -288,6 +320,74 @@ public func ayuGramSettingsScreen(context: AccountContext) -> ViewController {
             presentController?(ayuGramScamReportPrompt(context: context, completion: {}))
         case .importChat:
             ayuGramImportChat(context: context)
+        case .searchEngine:
+            let data = context.sharedContext.currentPresentationData.with { $0 }
+            let sheet = ActionSheetController(presentationData: data)
+            let current = Int(AyuGramSettings.shared.extra.searchEngine)
+            var items: [ActionSheetItem] = []
+            for (index, engine) in AyuGramSearchEngine.all.enumerated() {
+                items.append(ActionSheetButtonItem(title: (index == current ? "✓ " : "") + engine.title, color: .accent, action: { [weak sheet] in
+                    sheet?.dismissAnimated()
+                    AyuGramSettings.shared.updateExtra { $0.searchEngine = Int32(index) }
+                }))
+            }
+            sheet.setItemGroups([
+                ActionSheetItemGroup(items: items),
+                ActionSheetItemGroup(items: [ActionSheetButtonItem(title: data.strings.Common_Cancel, color: .accent, action: { [weak sheet] in sheet?.dismissAnimated() })])
+            ])
+            presentController?(sheet)
+        case .assistant:
+            pushController?(ayuGramAssistantController(context: context))
+        case .aiProvider:
+            let data = context.sharedContext.currentPresentationData.with { $0 }
+            let sheet = ActionSheetController(presentationData: data)
+            let current = AyuGramAssistantConfig.providerIndex
+            var items: [ActionSheetItem] = []
+            for (index, provider) in AyuGramAssistantProvider.all.enumerated() {
+                items.append(ActionSheetButtonItem(title: (index == current ? "✓ " : "") + provider.title, color: .accent, action: { [weak sheet] in
+                    sheet?.dismissAnimated()
+                    AyuGramAssistantConfig.providerIndex = index
+                }))
+            }
+            sheet.setItemGroups([
+                ActionSheetItemGroup(items: items),
+                ActionSheetItemGroup(items: [ActionSheetButtonItem(title: data.strings.Common_Cancel, color: .accent, action: { [weak sheet] in sheet?.dismissAnimated() })])
+            ])
+            presentController?(sheet)
+        case .aiKey:
+            let data = context.sharedContext.currentPresentationData.with { $0 }
+            let config = AyuGramAssistantConfig.current
+            presentController?(promptController(context: context, text: i18n("Ayu.AIKey", data.strings.baseLanguageCode) + " · " + config.provider.title, value: config.key, placeholder: config.provider.keyHint, characterLimit: 400, apply: { value in
+                if let value {
+                    AyuGramAssistantConfig.setKey(value.trimmingCharacters(in: .whitespacesAndNewlines))
+                }
+            }))
+        case .aiLanguage:
+            let data = context.sharedContext.currentPresentationData.with { $0 }
+            presentController?(promptController(context: context, text: i18n("Ayu.AILanguageInfo", data.strings.baseLanguageCode), value: AyuGramAssistantPreferences.language, placeholder: "English", characterLimit: 40, apply: { value in
+                if let value {
+                    AyuGramAssistantPreferences.language = value
+                }
+            }))
+        case .aiPersona:
+            let data = context.sharedContext.currentPresentationData.with { $0 }
+            presentController?(promptController(context: context, text: i18n("Ayu.AIPersonaInfo", data.strings.baseLanguageCode), value: AyuGramAssistantPreferences.persona, placeholder: i18n("Ayu.AIPersonaHint", data.strings.baseLanguageCode), characterLimit: 600, apply: { value in
+                if let value {
+                    AyuGramAssistantPreferences.persona = value
+                }
+            }))
+        case .supporter:
+            pushController?(ayuGramSupporterController(context: context))
+        case .video:
+            pushController?(ayuGramVideoSettingsController(context: context))
+        case .aiModel:
+            let data = context.sharedContext.currentPresentationData.with { $0 }
+            let config = AyuGramAssistantConfig.current
+            presentController?(promptController(context: context, text: i18n("Ayu.AIModel", data.strings.baseLanguageCode) + " · " + config.provider.title, value: config.model, placeholder: config.provider.model, characterLimit: 200, apply: { value in
+                if let value {
+                    AyuGramAssistantConfig.setModel(value.trimmingCharacters(in: .whitespacesAndNewlines))
+                }
+            }))
         case .silentSending:
             let data = context.sharedContext.currentPresentationData.with { $0 }
             let locale = data.strings.baseLanguageCode

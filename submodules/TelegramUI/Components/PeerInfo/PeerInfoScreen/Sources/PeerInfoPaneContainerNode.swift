@@ -805,7 +805,7 @@ final class PeerInfoPaneContainerNode: ASDisplayNode, ASGestureRecognizerDelegat
                         if -translation.x > size.width * 0.30 || (-translation.x >= 45.0 && velocity.x < -600.0) {
                             directionIsToRight = true
                         }
-                    } else if velocity.x > 10.0 || translation.x > size.width / 2.0 {
+                    } else if translation.x > size.width * 0.18 || (translation.x >= 30.0 && velocity.x > 450.0) {
                         directionIsToRight = false
                     }
                 }
