@@ -2,6 +2,7 @@ import Foundation
 import Postbox
 import SwiftSignalKit
 import SGSimpleSettings
+import Reachability
 
 public struct AyuGramHistoryPolicy: Codable, Equatable {
     public var selectedChats: [Int64] = []
@@ -74,17 +75,74 @@ private func pruneHistory(_ history: inout AyuGramHistory, transaction: Transact
     }
 }
 
-/// Downloads the photos, GIFs, videos and pictures of new messages in Message history
-/// chats right away, so a later deletion keeps them even if the chat was never opened.
+// Keep a small queue and stop active transfers as soon as Wi-Fi is lost.
+private final class AyuGramMediaPrefetcher {
+    static let shared = AyuGramMediaPrefetcher()
+    private struct Item {
+        let key: String
+        let mediaBox: MediaBox
+        let message: Message
+        let media: Media
+        let resource: MediaResource
+        let contentType: MediaResourceUserContentType
+    }
+    private var waiting: [Item] = []
+    private var active: [String: (Item, UUID, Disposable)] = [:]
+    private var wifi = false
+    private var networkDisposable: Disposable?
+
+    private init() {
+        self.networkDisposable = (Reachability.networkType |> deliverOnMainQueue).start(next: { [weak self] network in
+            guard let self else { return }
+            self.wifi = network == .wifi
+            if !self.wifi {
+                let stopped = Array(self.active.values)
+                self.active.removeAll()
+                for (item, _, disposable) in stopped {
+                    disposable.dispose()
+                    self.waiting.insert(item, at: 0)
+                }
+            }
+            self.startPending()
+        })
+    }
+
+    func enqueue(mediaBox: MediaBox, items: [(Message, Media, MediaResource, MediaResourceUserContentType)]) {
+        for (message, media, resource, contentType) in items {
+            let key = "\(message.id):\(resource.id)"
+            guard self.active[key] == nil, !self.waiting.contains(where: { $0.key == key }) else { continue }
+            self.waiting.append(Item(key: key, mediaBox: mediaBox, message: message, media: media, resource: resource, contentType: contentType))
+        }
+        if self.waiting.count > 128 { self.waiting.removeFirst(self.waiting.count - 128) }
+        self.startPending()
+    }
+
+    private func startPending() {
+        while self.wifi && self.active.count < 3 && !self.waiting.isEmpty {
+            let item = self.waiting.removeFirst()
+            let signal = fetchedMediaResource(mediaBox: item.mediaBox, userLocation: .peer(item.message.id.peerId), userContentType: item.contentType, reference: .media(media: .message(message: MessageReference(item.message), media: item.media), resource: item.resource)) |> deliverOnMainQueue
+            let token = UUID()
+            let done: () -> Void = { [weak self] in
+                // Defer completion so even synchronously completed signals have been installed.
+                DispatchQueue.main.async {
+                    guard let self, self.active[item.key]?.1 == token else { return }
+                    self.active.removeValue(forKey: item.key)
+                    self.startPending()
+                }
+            }
+            let disposable = signal.start(error: { _ in done() }, completed: done)
+            self.active[item.key] = (item, token, disposable)
+        }
+    }
+}
+
+/// Preload eligible incoming media while anti-deletion is enabled, only on Wi-Fi.
 func ayuGramPrefetchHistoryMedia(postbox: Postbox, ids: [MessageId]) {
     guard AyuGramSettings.shared.snapshot.messageHistory, !ids.isEmpty else { return }
     let mediaBox = postbox.mediaBox
     let _ = (postbox.transaction { transaction -> [(Message, Media, MediaResource, MediaResourceUserContentType)] in
-        let policy = transaction.getPreferencesEntry(key: ayuGramHistoryPolicyKey)?.get(AyuGramHistoryPolicy.self) ?? AyuGramHistoryPolicy()
-        let selected = Set(policy.selectedChats)
-        guard policy.savePhotos, !selected.isEmpty else { return [] }
         var items: [(Message, Media, MediaResource, MediaResourceUserContentType)] = []
-        for id in ids where selected.contains(id.peerId.toInt64()) && ayuGramIsHistoryCandidate(transaction: transaction, id: id) {
+        for id in ids where ayuGramIsHistoryCandidate(transaction: transaction, id: id) {
             guard let message = transaction.getMessage(id) else { continue }
             for media in message.media {
                 if let image = media as? TelegramMediaImage, let representation = largestImageRepresentation(image.representations) {
@@ -98,9 +156,7 @@ func ayuGramPrefetchHistoryMedia(postbox: Postbox, ids: [MessageId]) {
         return items
     }
     |> deliverOnMainQueue).startStandalone(next: { items in
-        for (message, media, resource, contentType) in items {
-            let _ = fetchedMediaResource(mediaBox: mediaBox, userLocation: .peer(message.id.peerId), userContentType: contentType, reference: .media(media: .message(message: MessageReference(message), media: media), resource: resource)).startStandalone()
-        }
+        AyuGramMediaPrefetcher.shared.enqueue(mediaBox: mediaBox, items: items)
     })
 }
 

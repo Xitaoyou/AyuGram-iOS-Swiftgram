@@ -936,6 +936,8 @@ final class UniversalVideoGalleryItemNode: ZoomableContentGalleryItemNode {
     private var pictureInPictureNode: UniversalVideoGalleryItemPictureInPictureNode?
     private var disablePictureInPicturePlaceholder: Bool = false
     private let statusButtonNode: HighlightableButtonNode
+    private let soundButton = UIButton(type: .system)
+    private var soundMuted = true
     private let statusNode: RadialStatusNode
     private var statusNodeShouldBeHidden = true
     
@@ -1041,6 +1043,12 @@ final class UniversalVideoGalleryItemNode: ZoomableContentGalleryItemNode {
         super.init()
 
         self.clipsToBounds = true
+        self.soundButton.backgroundColor = UIColor(white: 0.0, alpha: 0.6)
+        self.soundButton.tintColor = .white
+        self.soundButton.layer.cornerRadius = 22.0
+        self.soundButton.addTarget(self, action: #selector(self.soundButtonPressed), for: .touchUpInside)
+        self.updateSoundButton()
+        self.view.addSubview(self.soundButton)
         
         self.footerContentNode.shareMediaParameters = { [weak self] in
             guard let self, let playerStatusValue = self.playerStatusValue else {
@@ -1249,6 +1257,19 @@ final class UniversalVideoGalleryItemNode: ZoomableContentGalleryItemNode {
         self.subnodeTransform = CATransform3DMakeTranslation(-center * 0.16, 0.0, 0.0)
     }
     
+    @objc private func soundButtonPressed() {
+        self.soundMuted.toggle()
+        self.videoNode?.setSoundMuted(soundMuted: self.soundMuted)
+        self.updateSoundButton()
+    }
+
+    private func updateSoundButton() {
+        if #available(iOS 13.0, *) {
+            self.soundButton.setImage(UIImage(systemName: self.soundMuted ? "speaker.slash.fill" : "speaker.wave.2.fill"), for: .normal)
+        }
+        self.soundButton.accessibilityLabel = self.soundMuted ? "Unmute" : "Mute"
+    }
+
     override func containerLayoutUpdated(_ layout: ContainerViewLayout, navigationBarHeight: CGFloat, transition: ContainedViewLayoutTransition) {
         if let _ = self.customUnembedWhenPortrait, layout.size.width < layout.size.height {
             self.expandIntoCustomPiP()
@@ -1267,6 +1288,10 @@ final class UniversalVideoGalleryItemNode: ZoomableContentGalleryItemNode {
             self.zoomableContent = zoomableContent
         }
         
+        self.soundButton.frame = CGRect(x: layout.size.width - 60.0, y: max(navigationBarHeight, layout.size.height - layout.intrinsicInsets.bottom - 120.0), width: 44.0, height: 44.0)
+        self.soundButton.isHidden = self.isLivePhoto || !(self.item?.content is NativeVideoContent || self.item?.content is HLSVideoContent)
+        self.view.bringSubviewToFront(self.soundButton)
+
         let statusDiameter: CGFloat = 50.0
         let statusFrame = CGRect(origin: CGPoint(x: floor((layout.size.width - statusDiameter) / 2.0), y: floor((layout.size.height - statusDiameter) / 2.0)), size: CGSize(width: statusDiameter, height: statusDiameter))
         transition.updateFrame(node: self.statusButtonNode, frame: statusFrame)
@@ -1551,6 +1576,7 @@ final class UniversalVideoGalleryItemNode: ZoomableContentGalleryItemNode {
                 if let strongSelf = self {
                     strongSelf.updateDisplayPlaceholder(!value)
                     
+                    if value { strongSelf.videoNode?.setSoundMuted(soundMuted: strongSelf.soundMuted) }
                     if strongSelf.playOnContentOwnership {
                         strongSelf.playOnContentOwnership = false
                         strongSelf.initiallyActivated = true
@@ -1600,6 +1626,7 @@ final class UniversalVideoGalleryItemNode: ZoomableContentGalleryItemNode {
                 }
             }
             self.videoNode = videoNode
+            videoNode.setSoundMuted(soundMuted: self.soundMuted)
             self.videoNodeUserInteractionEnabled = disablePlayerControls || forceEnableUserInteraction
             videoNode.isUserInteractionEnabled = disablePlayerControls || forceEnableUserInteraction
             videoNode.backgroundColor = UIColor.black
