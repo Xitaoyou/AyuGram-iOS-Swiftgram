@@ -42,7 +42,7 @@ extension ReplayContext {
                                     combinedMaxIncomingReadId = max(combinedMaxIncomingReadId, maxIncomingReadId)
                                 }
 
-                                if combinedMaxIncomingReadId != 0 && id.id >= data.maxKnownMessageId {
+                                if combinedMaxIncomingReadId != 0 && id.id > combinedMaxIncomingReadId && id.id > data.maxKnownMessageId && !transaction.messageExists(id: id) {
                                     data.maxKnownMessageId = id.id
                                     data.incomingUnreadCount += 1
 

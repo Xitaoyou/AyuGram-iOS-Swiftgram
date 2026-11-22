@@ -67,4 +67,65 @@ final class FinalStateReplayerTests: StateSyncTestCase {
         XCTAssertNil(self.fixture.message(deletedId))
         XCTAssertEqual(removed.synchronouslyIsMessageDeletedRemotely(ids: [deletedId]), [deletedId])
     }
+    func testServerReadStateCanReduceAnInflatedUnreadCount() {
+        self.fixture.seedAccount(state: self.state(pts: 100))
+        let peerId = self.seedUserChat(401)
+        self.fixture.seedReadState(peerId: peerId, maxIncomingReadId: 10, maxOutgoingReadId: 0, maxKnownId: 30, count: 20)
+        let initial = AccountInitialState(state: self.state(pts: 100), peerIds: Set(), peerIdsRequiringLocalChatState: Set(), channelStates: [:], peerChatInfos: [:], locallyGeneratedMessageTimestamps: [:], channelsToPollExplicitely: Set())
+        var state = AccountMutableState(initialState: initial, initialPeers: [:], initialReferencedReplyMessageIds: ReferencedReplyMessageIds(), initialReferencedGeneralMessageIds: Set(), initialStoredMessages: Set(), initialStoredStories: [:], initialReadInboxMaxIds: [:], storedMessagesByPeerIdAndTimestamp: [:], initialSentScheduledMessageIds: Set())
+        state.operations.append(.ResetReadState(peerId: peerId, namespace: Namespaces.Message.Cloud, maxIncomingReadId: 25, maxOutgoingReadId: 0, maxKnownId: 30, count: 5, markedUnread: false))
+        let final = AccountFinalState(state: state, shouldPoll: false, incomplete: false, discard: false)
+        let result = self.fixture.transaction { transaction in
+            self.makeReplayer(MessagesRemovedContext()).applyReplay(final, policy: .verified, removePossiblyDeliveredMessagesUniqueIds: [:], transaction: transaction) != nil
+        }
+        XCTAssertEqual(result, true)
+        let count = self.fixture.transaction { $0.getCombinedPeerReadState(peerId)?.count }
+        XCTAssertEqual(count ?? nil, 5)
+    }
+
+    func testLocallyAdvancedReadStateDoesNotAdoptServerUnreadCount() {
+        self.fixture.seedAccount(state: self.state(pts: 100))
+        let peerId = self.seedUserChat(402)
+        self.fixture.seedReadState(peerId: peerId, maxIncomingReadId: 25, maxOutgoingReadId: 0, maxKnownId: 30, count: 5)
+        let initial = AccountInitialState(state: self.state(pts: 100), peerIds: Set(), peerIdsRequiringLocalChatState: Set(), channelStates: [:], peerChatInfos: [:], locallyGeneratedMessageTimestamps: [:], channelsToPollExplicitely: Set())
+        var state = AccountMutableState(initialState: initial, initialPeers: [:], initialReferencedReplyMessageIds: ReferencedReplyMessageIds(), initialReferencedGeneralMessageIds: Set(), initialStoredMessages: Set(), initialStoredStories: [:], initialReadInboxMaxIds: [:], storedMessagesByPeerIdAndTimestamp: [:], initialSentScheduledMessageIds: Set())
+        state.operations.append(.ResetReadState(peerId: peerId, namespace: Namespaces.Message.Cloud, maxIncomingReadId: 10, maxOutgoingReadId: 0, maxKnownId: 30, count: 20, markedUnread: false))
+        let final = AccountFinalState(state: state, shouldPoll: false, incomplete: false, discard: false)
+        let result = self.fixture.transaction { transaction in
+            self.makeReplayer(MessagesRemovedContext()).applyReplay(final, policy: .verified, removePossiblyDeliveredMessagesUniqueIds: [:], transaction: transaction) != nil
+        }
+        XCTAssertEqual(result, true)
+        let count = self.fixture.transaction { $0.getCombinedPeerReadState(peerId)?.count }
+        XCTAssertEqual(count ?? nil, 5)
+    }
+
+    func testRepeatedForumMessagesAreCountedOnlyOnce() {
+        self.fixture.seedAccount(state: self.state(pts: 100))
+        let peerId = StateSyncFixture.channelPeerId(403)
+        let channel = StateSyncFixture.makeChannel(id: peerId, accessHash: 1, title: "Forum", isBroadcast: false).withUpdatedFlags([.isForum])
+        self.fixture.seedChannel(channel, state: ChannelState(pts: 50, invalidatedPts: nil, synchronizedUntilMessageId: nil))
+        self.fixture.seedChat(peerId: peerId)
+        self.fixture.seedReadState(peerId: peerId, maxIncomingReadId: 19, maxOutgoingReadId: 0, maxKnownId: 20, count: 1)
+        func message(_ id: Int32) -> StoreMessage {
+            return StoreMessage(id: MessageId(peerId: peerId, namespace: Namespaces.Message.Cloud, id: id), customStableId: nil, globallyUniqueId: nil, groupingKey: nil, threadId: 5, timestamp: self.baseDate, flags: [.Incoming], tags: [], globalTags: [], localTags: [], forwardInfo: nil, authorId: nil, text: "message", attributes: [], media: [])
+        }
+        self.fixture.transaction { transaction -> Void in
+            let _ = transaction.addMessages([message(20)], location: .UpperHistoryBlock)
+            let data = MessageHistoryThreadData(creationDate: self.baseDate, isOwnedByMe: false, author: peerId, info: EngineMessageHistoryThread.Info(title: "Topic", icon: nil, iconColor: 0x6FB9F0), incomingUnreadCount: 1, isMarkedUnread: false, maxIncomingReadId: 19, maxKnownMessageId: 20, maxOutgoingReadId: 0, isClosed: false, isHidden: false, notificationSettings: TelegramPeerNotificationSettings.defaultSettings, isMessageFeeRemoved: false)
+            transaction.setMessageHistoryThreadInfo(peerId: peerId, threadId: 5, info: StoredMessageHistoryThreadInfo(data))
+        }
+        let initial = AccountInitialState(state: self.state(pts: 100), peerIds: Set(), peerIdsRequiringLocalChatState: Set(), channelStates: [:], peerChatInfos: [:], locallyGeneratedMessageTimestamps: [:], channelsToPollExplicitely: Set())
+        var state = AccountMutableState(initialState: initial, initialPeers: [:], initialReferencedReplyMessageIds: ReferencedReplyMessageIds(), initialReferencedGeneralMessageIds: Set(), initialStoredMessages: Set(), initialStoredStories: [:], initialReadInboxMaxIds: [:], storedMessagesByPeerIdAndTimestamp: [:], initialSentScheduledMessageIds: Set())
+        state.operations.append(.AddMessages([message(20), message(21), message(21)], .UpperHistoryBlock))
+        let final = AccountFinalState(state: state, shouldPoll: false, incomplete: false, discard: false)
+        let result = self.fixture.transaction { transaction in
+            self.makeReplayer(MessagesRemovedContext()).applyReplay(final, policy: .verified, removePossiblyDeliveredMessagesUniqueIds: [:], transaction: transaction) != nil
+        }
+        XCTAssertEqual(result, true)
+        let count = self.fixture.transaction { transaction in
+            transaction.getMessageHistoryThreadInfo(peerId: peerId, threadId: 5)?.data.get(MessageHistoryThreadData.self)?.incomingUnreadCount
+        }
+        XCTAssertEqual(count ?? nil, 2)
+    }
+
 }

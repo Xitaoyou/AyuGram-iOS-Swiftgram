@@ -33,17 +33,15 @@ extension ReplayContext {
         }
 
         var ignore = false
-        var localUnreadCount: Int32 = 0
         if let currentReadState = transaction.getCombinedPeerReadState(peerId) {
             loop: for (currentNamespace, currentState) in currentReadState.states {
                 if namespace == currentNamespace {
                     switch currentState {
-                    case let .idBased(localMaxIncomingReadId, _, _, localCount, localMarkedUnread):
-                        localUnreadCount = localCount
+                    case let .idBased(localMaxIncomingReadId, localMaxOutgoingReadId, localMaxKnownId, localCount, localMarkedUnread):
                         if localReadMarkIsAheadOfServer(localMaxIncomingReadId: localMaxIncomingReadId, serverMaxIncomingReadId: maxIncomingReadId, serverCount: count, serverMarkedUnread: markedUnreadValue) {
                             transaction.setNeedsIncomingReadStateSynchronization(peerId)
 
-                            transaction.resetIncomingReadStates([peerId: [namespace: .idBased(maxIncomingReadId: localMaxIncomingReadId, maxOutgoingReadId: maxOutgoingReadId, maxKnownId: maxKnownId, count: max(localCount, count), markedUnread: localMarkedUnread)]])
+                            transaction.resetIncomingReadStates([peerId: [namespace: .idBased(maxIncomingReadId: localMaxIncomingReadId, maxOutgoingReadId: max(localMaxOutgoingReadId, maxOutgoingReadId), maxKnownId: max(localMaxKnownId, maxKnownId), count: localCount, markedUnread: localMarkedUnread)]])
 
                             Logger.shared.log("State", "not applying incoming read state for \(peerId): \(localMaxIncomingReadId) > \(maxIncomingReadId)")
                             ignore = true
@@ -56,9 +54,7 @@ extension ReplayContext {
             }
         }
         if !ignore {
-            // AYG: never let a server snapshot shrink the accumulated badge,
-            // even when the locally-ahead guard above did not fire.
-            transaction.resetIncomingReadStates([peerId: [namespace: .idBased(maxIncomingReadId: maxIncomingReadId, maxOutgoingReadId: maxOutgoingReadId, maxKnownId: maxKnownId, count: max(localUnreadCount, count), markedUnread: markedUnreadValue)]])
+            transaction.resetIncomingReadStates([peerId: [namespace: .idBased(maxIncomingReadId: maxIncomingReadId, maxOutgoingReadId: maxOutgoingReadId, maxKnownId: maxKnownId, count: count, markedUnread: markedUnreadValue)]])
         }
     }
     

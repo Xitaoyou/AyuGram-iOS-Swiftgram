@@ -211,25 +211,16 @@ private func validatePeerReadState(network: Network, postbox: Postbox, stateMana
             |> ignoreValues
         }
         return stateManager.addCustomOperation(postbox.transaction { transaction -> PeerReadStateValidationError? in
-            var localUnreadCount: Int32 = 0
             if let currentReadState = transaction.getCombinedPeerReadState(peerId) {
                 loop: for (namespace, currentState) in currentReadState.states {
                     if namespace == Namespaces.Message.Cloud {
                         switch currentState {
-                        case let .idBased(localMaxIncomingReadId, localMaxOutgoingReadId, localMaxKnownId, localCount, localMarkedUnread):
-                            localUnreadCount = localCount
+                        case let .idBased(localMaxIncomingReadId, _, _, _, _):
                             if case let .idBased(updatedMaxIncomingReadId, _, _, updatedCount, updatedMarkedUnread) = readState {
                                 if localReadMarkIsAheadOfServer(localMaxIncomingReadId: localMaxIncomingReadId, serverMaxIncomingReadId: updatedMaxIncomingReadId, serverCount: updatedCount, serverMarkedUnread: updatedMarkedUnread) {
-                                    // AyuGram: reads made while receipts are hidden stay local, so
-                                    // the server stays behind on purpose. Retrying here restarted
-                                    // validation immediately and forever, flooding the network and
-                                    // the state manager until nothing else loaded. Keep the local
-                                    // read mark and stop validating — but never shrink the badge:
-                                    // the server's count can be larger when many messages arrived
-                                    // while the local mark was pinned.
-                                    if updatedCount > localCount {
-                                        transaction.resetIncomingReadStates([peerId: [Namespaces.Message.Cloud: .idBased(maxIncomingReadId: localMaxIncomingReadId, maxOutgoingReadId: localMaxOutgoingReadId, maxKnownId: localMaxKnownId, count: updatedCount, markedUnread: localMarkedUnread)]])
-                                    }
+                                    // The server can count messages that were already read locally
+                                    // while read receipts are suppressed. Keep the local count with
+                                    // its newer read mark until the server catches up.
                                     transaction.confirmSynchronizedIncomingReadState(peerId)
                                     return nil
                                 }
@@ -254,11 +245,6 @@ private func validatePeerReadState(network: Network, postbox: Postbox, stateMana
                         break
                     }
                 }
-            }
-            // AYG: final guard — a server snapshot must never shrink the badge,
-            // regardless of which branch above decided to apply it.
-            if case let .idBased(maxIncoming, maxOutgoing, maxKnown, count, markedUnread) = updatedReadState, count < localUnreadCount {
-                updatedReadState = .idBased(maxIncomingReadId: maxIncoming, maxOutgoingReadId: maxOutgoing, maxKnownId: maxKnown, count: localUnreadCount, markedUnread: markedUnread)
             }
             transaction.resetIncomingReadStates([peerId: [Namespaces.Message.Cloud: updatedReadState]])
             return nil
