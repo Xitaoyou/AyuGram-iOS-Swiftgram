@@ -177,7 +177,7 @@ jobs:
             # Both variants race to create it; whichever loses just uploads.
             gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --prerelease \
               --title "AyuGram build $BUILD${LABEL:+-$LABEL}" \
-              --notes "Unsigned IPAs; re-sign them with your installer. Published to users with the Publish update workflow." || true
+              --notes "Unsigned IPAs; re-sign them with your installer. SideStore source: https://raw.githubusercontent.com/Xitaoyou/AyuGram-iOS-Swiftgram/standard/sidestore-source.json" || true
           fi
           # The build number in the name keeps downloads of different builds apart; Safari
           # turns a second "AyuGram-standard.ipa" into "AyuGram-standard.ipa 2".
@@ -185,6 +185,15 @@ jobs:
           # The app compares its loaded code with this fingerprint to tell an official build from a modified one.
           python ci/ayugram_integrity.py "AyuGram-$VARIANT-$BUILD.ipa" "$BUILD" > "AyuGram-$VARIANT-$BUILD.integrity.json"
           gh release upload "$TAG" "AyuGram-$VARIANT-$BUILD.ipa" "AyuGram-$VARIANT-$BUILD.integrity.json" --repo "$GITHUB_REPOSITORY" --clobber
+
+      - name: Update SideStore source
+        if: ${{ success() && matrix.variant == 'standard' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          BUILD="$(python -c 'import json; print(json.load(open("artifacts/build-manifest.json"))["build_number"])')"
+          python ci/sidestore_source.py "AyuGram-standard-$BUILD.ipa" "$GITHUB_REPOSITORY" "$BUILD" --publish
 
       - name: Remove generated credential files
         if: ${{ always() }}
