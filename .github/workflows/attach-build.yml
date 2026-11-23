@@ -68,7 +68,7 @@ jobs:
           if ! gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --target "$(git rev-parse HEAD)" --prerelease \
               --title "AyuGram build $BUILD${LABEL:+-$LABEL}" \
-              --notes "Unsigned IPAs; re-sign them with your installer. Published to users with the Publish update workflow."
+              --notes "Unsigned IPAs; re-sign them with your installer. SideStore source: https://raw.githubusercontent.com/Xitaoyou/AyuGram-iOS-Swiftgram/standard/sidestore-source.json"
           fi
           for variant in standard custom; do
             src="$(find incoming -maxdepth 2 -name "AyuGram-$variant-unsigned.ipa" | head -1)"
@@ -77,4 +77,7 @@ jobs:
             python ci/ayugram_integrity.py "AyuGram-$variant-$BUILD.ipa" "$BUILD" > "AyuGram-$variant-$BUILD.integrity.json"
             gh release upload "$TAG" "AyuGram-$variant-$BUILD.ipa" "AyuGram-$variant-$BUILD.integrity.json" --repo "$GITHUB_REPOSITORY" --clobber
           done
+          if [ -f "AyuGram-standard-$BUILD.ipa" ]; then
+            python ci/sidestore_source.py "AyuGram-standard-$BUILD.ipa" "$GITHUB_REPOSITORY" "$BUILD" --publish
+          fi
           echo "Published $TAG" | tee -a "$GITHUB_STEP_SUMMARY"

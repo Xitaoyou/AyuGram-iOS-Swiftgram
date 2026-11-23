@@ -31,6 +31,14 @@ Saved messages, history and settings stay on the device. AyuGram also talks to i
 
 The first commit on `standard` is the unmodified Swiftgram source. Every change AyuGram makes is in the commits after it, so you can compare `upstream...standard` (and `standard...custom`) on GitHub to see exactly what is different.
 
+## Install with SideStore
+
+Add the AyugramXi source in SideStore → Browse → Sources → +:
+
+`https://raw.githubusercontent.com/Xitaoyou/AyuGram-iOS-Swiftgram/standard/sidestore-source.json`
+
+[Add source in SideStore](sidestore://source?url=https%3A%2F%2Fraw.githubusercontent.com%2FXitaoyou%2FAyuGram-iOS-Swiftgram%2Fstandard%2Fsidestore-source.json). The source tracks this fork's standard builds and updates after each successful build.
+
 ## Building
 
 The app is built by GitHub Actions as unsigned IPAs. Sign them with your own certificate (AltStore, SideStore, Sideloadly, ESign, Feather, …) or run them in LiveContainer.
