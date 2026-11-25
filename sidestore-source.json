@@ -12,12 +12,12 @@
       "versions": [
         {
           "version": "13.2",
-          "buildVersion": "213802",
-          "date": "2026-11-23",
-          "localizedDescription": "AyugramXi build 213802",
-          "downloadURL": "https://github.com/Xitaoyou/AyuGram-iOS-Swiftgram/releases/download/build-213802/AyuGram-standard-213802.ipa",
-          "size": 87029466,
-          "sha256": "e6e95afbf62df5a676c19d69e423dac1d1dd1c564ae1dd85eca45383d6e967cb",
+          "buildVersion": "214002",
+          "date": "2026-11-25",
+          "localizedDescription": "AyugramXi build 214002",
+          "downloadURL": "https://github.com/Xitaoyou/AyuGram-iOS-Swiftgram/releases/download/build-214002/AyuGram-standard-214002.ipa",
+          "size": 87032940,
+          "sha256": "84b2c93713a80e13a93bfe9d6c34467e989c22f4270947ca1ba986fbeebec5cc",
           "minOSVersion": "15.0"
         }
       ]
