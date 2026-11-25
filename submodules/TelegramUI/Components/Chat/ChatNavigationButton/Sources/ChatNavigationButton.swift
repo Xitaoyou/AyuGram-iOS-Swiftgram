@@ -10,6 +10,7 @@ public enum ChatNavigationButtonAction: Equatable {
     case clearHistory
     case clearCache
     case cancelMessageSelection
+    case copySelectedMessages
     case search(hasTags: Bool)
     case dismiss
     case toggleInfoPanel

@@ -1,4 +1,6 @@
 import Foundation
+import Postbox
+import ChatRichTextEditorComposer
 import UIKit
 import SwiftSignalKit
 import Display
@@ -131,6 +133,36 @@ extension ChatControllerImpl {
             self.toggleSideList()
         case .cancelMessageSelection:
             self.updateChatPresentationInterfaceState(animated: true, interactive: true, { $0.updatedInterfaceState { $0.withoutSelectionState() } })
+        case .copySelectedMessages:
+            guard !self.presentationInterfaceState.copyProtectionEnabled,
+                  let ids = self.presentationInterfaceState.interfaceState.selectionState?.selectedIds, !ids.isEmpty else {
+                return
+            }
+            self.navigationActionDisposable.set((self.context.account.postbox.transaction { transaction -> [Message] in
+                return ids.compactMap { transaction.getMessage($0) }.sorted { $0.index < $1.index }
+            }
+            |> deliverOnMainQueue).startStrict(next: { [weak self] messages in
+                guard let self else { return }
+                let copyable = messages.filter { !$0.isCopyProtected() }
+                if copyable.count == 1, let message = copyable.first,
+                   let rich = message.attributes.first(where: { $0 is RichTextMessageAttribute }) as? RichTextMessageAttribute {
+                    UIPasteboard.general.items = [richMessagePasteboardItem(fromInstantPage: rich.fullInstantPage ?? rich.instantPage)]
+                } else if copyable.count == 1, let message = copyable.first {
+                    guard !message.text.isEmpty else { return }
+                    let entities = (message.attributes.first(where: { $0 is TextEntitiesMessageAttribute }) as? TextEntitiesMessageAttribute)?.entities
+                    storeMessageTextInPasteboard(message.text, entities: entities)
+                } else {
+                    let texts = copyable.compactMap { message -> String? in
+                        if let rich = message.attributes.first(where: { $0 is RichTextMessageAttribute }) as? RichTextMessageAttribute {
+                            return richMessagePasteboardItem(fromInstantPage: rich.fullInstantPage ?? rich.instantPage)["public.utf8-plain-text"] as? String
+                        }
+                        return message.text.isEmpty ? nil : message.text
+                    }.filter { !$0.isEmpty }
+                    guard !texts.isEmpty else { return }
+                    UIPasteboard.general.string = texts.joined(separator: "\n\n")
+                }
+                self.present(UndoOverlayController(presentationData: self.presentationData, content: .copy(text: self.presentationData.strings.Conversation_MessageCopied), elevatedLayout: false, action: { _ in return false }), in: .current)
+            }))
         case .clearHistory:
             guard !self.presentAccountFrozenInfoIfNeeded() else {
                 return

@@ -16,53 +16,17 @@ func leftNavigationButtonForChatInterfaceState(_ presentationInterfaceState: Cha
         if let _ = presentationInterfaceState.reportReason {
             return ChatNavigationButton(action: .spacer, buttonItem: UIBarButtonItem(title: " ", style: .plain, target: nil, action: nil))
         }
-        if case .replyThread = presentationInterfaceState.chatLocation {
-            return nil
+        let hasSelection = !(presentationInterfaceState.interfaceState.selectionState?.selectedIds.isEmpty ?? true)
+        let button: ChatNavigationButton
+        if let currentButton, currentButton.action == .copySelectedMessages {
+            button = currentButton
+        } else {
+            let item = UIBarButtonItem(title: strings.Conversation_ContextMenuCopy, style: .plain, target: target, action: selector)
+            item.accessibilityLabel = strings.Conversation_ContextMenuCopy
+            button = ChatNavigationButton(action: .copySelectedMessages, buttonItem: item)
         }
-        // MARK: Swiftgram
-        // Message selection starts with nothing selected, so a clear-all control
-        // here would wipe the whole chat before the user picked a single message.
-        // Clearing the history stays available from the chat's context menu.
-        if presentationInterfaceState.interfaceState.selectionState?.selectedIds.isEmpty ?? true {
-            return nil
-        }
-        //
-        if let currentButton = currentButton, currentButton.action == .clearHistory {
-            return nil
-        } else if let peer = presentationInterfaceState.renderedPeer?.peer {
-            let canClear: Bool
-            var title = strings.Conversation_ClearAll
-            if case .scheduledMessages = presentationInterfaceState.subject {
-                canClear = true
-                title = strings.ScheduledMessages_ClearAll
-            } else {
-                if peer is TelegramUser || peer is TelegramGroup || peer is TelegramSecretChat {
-                    canClear = true
-                } else if let peer = peer as? TelegramChannel, case .group = peer.info, peer.addressName == nil && presentationInterfaceState.peerGeoLocation == nil {
-                    canClear = true
-                } else if let peer = peer as? TelegramChannel {
-                    if case .broadcast = peer.info {
-                        title = strings.Conversation_ClearChannel
-                    }
-                    if peer.hasPermission(.changeInfo) {
-                        canClear = true
-                    } else {
-                        canClear = false
-                    }
-                } else {
-                    canClear = false
-                }
-            }
-            
-            if canClear {
-                return nil
-            } else {
-                title = strings.Conversation_ClearCache
-                let buttonItem = UIBarButtonItem(title: strings.Conversation_ClearCache, style: .plain, target: target, action: selector)
-                buttonItem.accessibilityLabel = title
-                return ChatNavigationButton(action: .clearCache, buttonItem: buttonItem)
-            }
-        }
+        button.buttonItem.isEnabled = hasSelection && !presentationInterfaceState.copyProtectionEnabled
+        return button
     }
     
     if case let .customChatContents(customChatContents) = presentationInterfaceState.subject {

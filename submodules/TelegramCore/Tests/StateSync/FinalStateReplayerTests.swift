@@ -87,6 +87,9 @@ final class FinalStateReplayerTests: StateSyncTestCase {
         self.fixture.seedAccount(state: self.state(pts: 100))
         let peerId = self.seedUserChat(402)
         self.fixture.seedReadState(peerId: peerId, maxIncomingReadId: 25, maxOutgoingReadId: 0, maxKnownId: 30, count: 5)
+        self.fixture.transaction { transaction in
+            transaction.addHole(peerId: peerId, threadId: nil, namespace: Namespaces.Message.Cloud, space: .everywhere, range: 11 ... 25)
+        }
         let initial = AccountInitialState(state: self.state(pts: 100), peerIds: Set(), peerIdsRequiringLocalChatState: Set(), channelStates: [:], peerChatInfos: [:], locallyGeneratedMessageTimestamps: [:], channelsToPollExplicitely: Set())
         var state = AccountMutableState(initialState: initial, initialPeers: [:], initialReferencedReplyMessageIds: ReferencedReplyMessageIds(), initialReferencedGeneralMessageIds: Set(), initialStoredMessages: Set(), initialStoredStories: [:], initialReadInboxMaxIds: [:], storedMessagesByPeerIdAndTimestamp: [:], initialSentScheduledMessageIds: Set())
         state.operations.append(.ResetReadState(peerId: peerId, namespace: Namespaces.Message.Cloud, maxIncomingReadId: 10, maxOutgoingReadId: 0, maxKnownId: 30, count: 20, markedUnread: false))
@@ -126,6 +129,48 @@ final class FinalStateReplayerTests: StateSyncTestCase {
             transaction.getMessageHistoryThreadInfo(peerId: peerId, threadId: 5)?.data.get(MessageHistoryThreadData.self)?.incomingUnreadCount
         }
         XCTAssertEqual(count ?? nil, 2)
+    }
+
+    func testGhostChannelSnapshotCountsNewMessagesWithoutRecountingLocalReads() {
+        self.fixture.seedAccount(state: self.state(pts: 100))
+        let peerId = self.seedChannel(404, pts: 50, storedMessageId: nil)
+        for id in 11 ... 12 {
+            self.fixture.storeMessage(peerId: peerId, id: Int32(id), timestamp: self.baseDate, authorId: nil, text: "read")
+        }
+        self.fixture.removeAllHoles(peerId: peerId)
+        self.fixture.seedReadState(peerId: peerId, maxIncomingReadId: 12, maxOutgoingReadId: 0, maxKnownId: 12, count: 0)
+        let server = PeerReadState.idBased(maxIncomingReadId: 10, maxOutgoingReadId: 0, maxKnownId: 15, count: 5, markedUnread: false)
+        let merged = self.fixture.transaction { transaction in
+            ayuGramReconcileReadState(transaction: transaction, peerId: peerId, namespace: Namespaces.Message.Cloud, server: server)
+        }
+        XCTAssertEqual(merged, .idBased(maxIncomingReadId: 12, maxOutgoingReadId: 0, maxKnownId: 15, count: 3, markedUnread: false))
+        self.fixture.transaction { transaction in
+            if let merged { transaction.resetIncomingReadStates([peerId: [Namespaces.Message.Cloud: merged]]) }
+        }
+        let repeated = self.fixture.transaction { transaction in
+            ayuGramReconcileReadState(transaction: transaction, peerId: peerId, namespace: Namespaces.Message.Cloud, server: server)
+        }
+        XCTAssertEqual(repeated, merged, "replaying the same snapshot must not add messages twice")
+    }
+
+    func testGhostChannelSnapshotWithAHoleDoesNotHideLaterMessages() {
+        self.fixture.seedAccount(state: self.state(pts: 100))
+        let peerId = self.seedChannel(405, pts: 50, storedMessageId: nil)
+        self.fixture.seedReadState(peerId: peerId, maxIncomingReadId: 12, maxOutgoingReadId: 0, maxKnownId: 12, count: 0)
+        self.fixture.transaction { transaction in
+            transaction.addHole(peerId: peerId, threadId: nil, namespace: Namespaces.Message.Cloud, space: .everywhere, range: 11 ... 12)
+        }
+        let server = PeerReadState.idBased(maxIncomingReadId: 10, maxOutgoingReadId: 0, maxKnownId: 15, count: 5, markedUnread: false)
+        let merged = self.fixture.transaction { transaction in
+            ayuGramReconcileReadState(transaction: transaction, peerId: peerId, namespace: Namespaces.Message.Cloud, server: server)
+        }
+        XCTAssertEqual(merged, .idBased(maxIncomingReadId: 12, maxOutgoingReadId: 0, maxKnownId: 12, count: 0, markedUnread: false))
+        self.fixture.transaction { transaction in
+            if let merged { transaction.resetIncomingReadStates([peerId: [Namespaces.Message.Cloud: merged]]) }
+        }
+        self.fixture.storeMessage(peerId: peerId, id: 13, timestamp: self.baseDate, authorId: nil, text: "new")
+        let count = self.fixture.transaction { $0.getCombinedPeerReadState(peerId)?.count }
+        XCTAssertEqual(count ?? nil, 1)
     }
 
 }

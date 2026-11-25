@@ -188,6 +188,52 @@ func localReadMarkIsAheadOfServer(localMaxIncomingReadId: MessageId.Id, serverMa
     return (serverHasUnread || ghostModeKeepsServerBehind) && localMaxIncomingReadId > serverMaxIncomingReadId
 }
 
+// Merge a server snapshot without counting messages already read locally in Ghost Mode.
+// An incomplete local range cannot prove how many messages the server still counts as
+// unread, so do not advance maxKnown past the old count: later arrivals must still count.
+func ayuGramReconcileReadState(transaction: Transaction, peerId: PeerId, namespace: MessageId.Namespace, server: PeerReadState) -> PeerReadState {
+    guard case let .idBased(serverRead, serverOut, serverTop, serverCount, serverMarked) = server,
+          let local = transaction.getPeerReadStates(peerId)?.first(where: { $0.0 == namespace })?.1,
+          case let .idBased(localRead, localOut, localTop, localCount, localMarked) = local,
+          localReadMarkIsAheadOfServer(localMaxIncomingReadId: localRead, serverMaxIncomingReadId: serverRead, serverCount: serverCount, serverMarkedUnread: serverMarked) else {
+        return server
+    }
+    var count = localCount
+    var knownTop = localTop
+    // Keep the work bounded for old accounts with a very large unsynchronised read gap.
+    if serverRead >= 0 && localRead < Int32.max && Int64(localRead) - Int64(serverRead) <= 100_000 {
+        let lower = serverRead + 1
+        let upper = min(localRead, serverTop)
+        let holes = transaction.getHoles(peerId: peerId, namespace: namespace)
+        let covered = lower > upper || holes.intersection(IndexSet(integersIn: Int(lower) ..< (Int(upper) + 1))).isEmpty
+        if covered {
+            var locallyRead: Int32 = 0
+            if lower <= upper {
+                for id in transaction.messageIdsInRange(peerId: peerId, namespace: namespace, range: lower ... upper, limit: 0) {
+                    if let message = transaction.getMessage(id), !message.flags.contains(.AyuLocallyDeleted), !message.flags.intersection(.IsIncomingMask).isEmpty {
+                        locallyRead += 1
+                    }
+                }
+            }
+            let serverUnreadAfterLocalRead = max(0, serverCount - locallyRead)
+            // A locally newer snapshot can contain messages beyond the server response.
+            count = localTop > serverTop ? max(localCount, serverUnreadAfterLocalRead) : serverUnreadAfterLocalRead
+            knownTop = max(localTop, serverTop)
+        }
+    }
+    return .idBased(maxIncomingReadId: localRead, maxOutgoingReadId: max(localOut, serverOut), maxKnownId: knownTop, count: count, markedUnread: localMarked)
+}
+
+func ayuGramReconcileReadStates(transaction: Transaction, states: [PeerId: [MessageId.Namespace: PeerReadState]]) -> [PeerId: [MessageId.Namespace: PeerReadState]] {
+    var result = states
+    for (peerId, namespaces) in states {
+        for (namespace, state) in namespaces {
+            result[peerId]?[namespace] = ayuGramReconcileReadState(transaction: transaction, peerId: peerId, namespace: namespace, server: state)
+        }
+    }
+    return result
+}
+
 private func validatePeerReadState(network: Network, postbox: Postbox, stateManager: AccountStateManager, peerId: PeerId) -> Signal<Never, PeerReadStateValidationError> {
     if peerId.namespace == Namespaces.Peer.SecretChat {
         // A secret chat has no Api.InputPeer, so there is no dialog to read an authoritative
@@ -211,26 +257,15 @@ private func validatePeerReadState(network: Network, postbox: Postbox, stateMana
             |> ignoreValues
         }
         return stateManager.addCustomOperation(postbox.transaction { transaction -> PeerReadStateValidationError? in
-            if let currentReadState = transaction.getCombinedPeerReadState(peerId) {
-                loop: for (namespace, currentState) in currentReadState.states {
-                    if namespace == Namespaces.Message.Cloud {
-                        switch currentState {
-                        case let .idBased(localMaxIncomingReadId, _, _, _, _):
-                            if case let .idBased(updatedMaxIncomingReadId, _, _, updatedCount, updatedMarkedUnread) = readState {
-                                if localReadMarkIsAheadOfServer(localMaxIncomingReadId: localMaxIncomingReadId, serverMaxIncomingReadId: updatedMaxIncomingReadId, serverCount: updatedCount, serverMarkedUnread: updatedMarkedUnread) {
-                                    // The server can count messages that were already read locally
-                                    // while read receipts are suppressed. Keep the local count with
-                                    // its newer read mark until the server catches up.
-                                    transaction.confirmSynchronizedIncomingReadState(peerId)
-                                    return nil
-                                }
-                            }
-                        default:
-                            break
-                        }
-                        break loop
-                    }
-                }
+            let reconciled = ayuGramReconcileReadState(transaction: transaction, peerId: peerId, namespace: Namespaces.Message.Cloud, server: readState)
+            if let currentReadState = transaction.getCombinedPeerReadState(peerId),
+               let current = currentReadState.states.first(where: { $0.0 == Namespaces.Message.Cloud })?.1,
+               case let .idBased(localRead, _, _, _, _) = current,
+               case let .idBased(serverRead, _, _, serverCount, serverMarked) = readState,
+               localReadMarkIsAheadOfServer(localMaxIncomingReadId: localRead, serverMaxIncomingReadId: serverRead, serverCount: serverCount, serverMarkedUnread: serverMarked) {
+                transaction.resetIncomingReadStates([peerId: [Namespaces.Message.Cloud: reconciled]])
+                transaction.confirmSynchronizedIncomingReadState(peerId)
+                return nil
             }
             var updatedReadState = readState
             if case let .idBased(updatedMaxIncomingReadId, updatedMaxOutgoingReadId, updatedMaxKnownId, updatedCount, updatedMarkedUnread) = readState, let readStates = transaction.getPeerReadStates(peerId) {

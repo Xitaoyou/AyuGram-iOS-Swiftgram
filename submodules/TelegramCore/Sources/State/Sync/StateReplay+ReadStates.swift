@@ -37,11 +37,11 @@ extension ReplayContext {
             loop: for (currentNamespace, currentState) in currentReadState.states {
                 if namespace == currentNamespace {
                     switch currentState {
-                    case let .idBased(localMaxIncomingReadId, localMaxOutgoingReadId, localMaxKnownId, localCount, localMarkedUnread):
+                    case let .idBased(localMaxIncomingReadId, _, _, _, _):
                         if localReadMarkIsAheadOfServer(localMaxIncomingReadId: localMaxIncomingReadId, serverMaxIncomingReadId: maxIncomingReadId, serverCount: count, serverMarkedUnread: markedUnreadValue) {
                             transaction.setNeedsIncomingReadStateSynchronization(peerId)
 
-                            transaction.resetIncomingReadStates([peerId: [namespace: .idBased(maxIncomingReadId: localMaxIncomingReadId, maxOutgoingReadId: max(localMaxOutgoingReadId, maxOutgoingReadId), maxKnownId: max(localMaxKnownId, maxKnownId), count: localCount, markedUnread: localMarkedUnread)]])
+                            transaction.resetIncomingReadStates([peerId: [namespace: ayuGramReconcileReadState(transaction: transaction, peerId: peerId, namespace: namespace, server: .idBased(maxIncomingReadId: maxIncomingReadId, maxOutgoingReadId: maxOutgoingReadId, maxKnownId: maxKnownId, count: count, markedUnread: markedUnreadValue))]])
 
                             Logger.shared.log("State", "not applying incoming read state for \(peerId): \(localMaxIncomingReadId) > \(maxIncomingReadId)")
                             ignore = true
@@ -81,7 +81,11 @@ extension ReplayContext {
                 if updatedStates[i].0 == namespace {
                     switch updatedStates[i].1 {
                         case let .idBased(currentMaxIncomingReadId, maxOutgoingReadId, maxKnownId, _, markedUnread):
-                            updatedStates[i].1 = .idBased(maxIncomingReadId: max(currentMaxIncomingReadId, maxIncomingReadId), maxOutgoingReadId: maxOutgoingReadId, maxKnownId: max(maxKnownId, maxIncomingReadId), count: count, markedUnread: markedUnread)
+                            if localReadMarkIsAheadOfServer(localMaxIncomingReadId: currentMaxIncomingReadId, serverMaxIncomingReadId: maxIncomingReadId, serverCount: count, serverMarkedUnread: markedUnread) {
+                                updatedStates[i].1 = ayuGramReconcileReadState(transaction: transaction, peerId: peerId, namespace: namespace, server: .idBased(maxIncomingReadId: maxIncomingReadId, maxOutgoingReadId: maxOutgoingReadId, maxKnownId: maxKnownId, count: count, markedUnread: markedUnread))
+                            } else {
+                                updatedStates[i].1 = .idBased(maxIncomingReadId: max(currentMaxIncomingReadId, maxIncomingReadId), maxOutgoingReadId: maxOutgoingReadId, maxKnownId: max(maxKnownId, maxIncomingReadId), count: count, markedUnread: markedUnread)
+                            }
                             foundState = true
                         case .indexBased:
                             assertionFailure()
@@ -95,7 +99,7 @@ extension ReplayContext {
                 invalidateGroupStats.insert(groupId)
             }
             let stateDict = Dictionary(updatedStates, uniquingKeysWith: { lhs, _ in lhs })
-            transaction.resetIncomingReadStates([peerId: stateDict])
+            transaction.resetIncomingReadStates(ayuGramReconcileReadStates(transaction: transaction, states: [peerId: stateDict]))
         } else {
             transaction.applyIncomingReadMaxId(MessageId(peerId: peerId, namespace: namespace, id: maxIncomingReadId))
             transaction.setNeedsIncomingReadStateSynchronization(peerId)
