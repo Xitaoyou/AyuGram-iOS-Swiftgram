@@ -1,5 +1,4 @@
 import Foundation
-import Postbox
 import ChatRichTextEditorComposer
 import UIKit
 import SwiftSignalKit
@@ -138,12 +137,12 @@ extension ChatControllerImpl {
                   let ids = self.presentationInterfaceState.interfaceState.selectionState?.selectedIds, !ids.isEmpty else {
                 return
             }
-            self.navigationActionDisposable.set((self.context.account.postbox.transaction { transaction -> [Message] in
-                return ids.compactMap { transaction.getMessage($0) }.sorted { $0.index < $1.index }
-            }
+            self.navigationActionDisposable.set((self.context.engine.data.get(EngineDataMap(
+                ids.map(TelegramEngine.EngineData.Item.Messages.Message.init)
+            ))
             |> deliverOnMainQueue).startStrict(next: { [weak self] messages in
                 guard let self else { return }
-                let copyable = messages.filter { !$0.isCopyProtected() }
+                let copyable = messages.values.compactMap { $0?._asMessage() }.filter { !$0.isCopyProtected() }.sorted { $0.index < $1.index }
                 if copyable.count == 1, let message = copyable.first,
                    let rich = message.attributes.first(where: { $0 is RichTextMessageAttribute }) as? RichTextMessageAttribute {
                     UIPasteboard.general.items = [richMessagePasteboardItem(fromInstantPage: rich.fullInstantPage ?? rich.instantPage)]
